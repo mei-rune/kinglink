@@ -196,6 +196,36 @@ func TestRunErrorAndRescheduleIt(t *testing.T) {
 	})
 }
 
+
+func TestRunMaxLenErrorAndRescheduleIt(t *testing.T) {
+	mux := NewServeMux()
+	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+		return errors.New(strings.Repeat("aaa", 2000))
+	}))
+	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(1))
+		if nil != e {
+			t.Error(e)
+			return
+		}
+
+		assertCount(t, w, conn, 1)
+
+		success, failure, e := w.workOff(ctx, 1)
+		if e != nil {
+			t.Error(e)
+		}
+		if success != 0 {
+			t.Error("want 0 got", success)
+		}
+		if failure != 1 {
+			t.Error("want 1 got", failure)
+		}
+
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.Tablename+" WHERE failed_at IS NOT NULL", 0)
+	})
+}
+
 func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 	mux := NewServeMux()
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
