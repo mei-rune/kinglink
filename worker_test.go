@@ -180,6 +180,37 @@ func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 
 		assertCount(t, w, conn, 1)
 
+		tryRun := 3
+		for i := 0; i < tryRun; i++ {
+			success, failure, e := w.workOff(ctx, 3)
+			if e != nil {
+				t.Error(e)
+			}
+			if success != 0 {
+				t.Error("want 0 got", success)
+			}
+			if failure != 1 {
+				t.Error("want 1 got", failure)
+			}
+
+			var runAt time.Time
+			e = conn.QueryRow("SELECT run_at FROM " + w.options.Tablename).Scan(&runAt)
+			if nil != e {
+				t.Error(e)
+				return
+			}
+
+			if i < tryRun-1 {
+				assetTime(t, runAt, time.Now().Add((time.Duration(i)*10+5)*time.Second))
+			}
+
+			_, e = conn.Exec("UPDATE "+w.options.Tablename+" SET run_at = $1", time.Now().Add(-1*time.Second))
+			if nil != e {
+				t.Error(e)
+				return
+			}
+		}
+
 		success, failure, e := w.workOff(ctx, 3)
 		if e != nil {
 			t.Error(e)
@@ -187,15 +218,15 @@ func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 		if success != 0 {
 			t.Error("want 0 got", success)
 		}
-		if failure != 2 {
-			t.Error("want 2 got", failure)
+		if failure != 0 {
+			t.Error("want 0 got", failure)
 		}
 
-		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.Tablename+" WHERE failed_at IS NOT NULL", 0)
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.Tablename+" WHERE failed_at IS NOT NULL", 1)
 	})
 }
 
-func TestRunAgait(t *testing.T) {
+func TestRunAgain(t *testing.T) {
 	count := 2
 	mux := NewServeMux()
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
@@ -385,50 +416,6 @@ func TestRunAgait(t *testing.T) {
 // 		}
 // 	})
 // }
-
-// var max_message_txt = `java.sql.SQLIntegrityConstraintViolationException: ORA-01400: 无法将 NULL 插入 ("GLASMS"."SM_SEND_SM_LIST"."SMCONTENT")
-
-// 	at oracle.jdbc.driver.T4CTTIoer.processError(T4CTTIoer.java:445)
-// 	at oracle.jdbc.driver.T4CTTIoer.processError(T4CTTIoer.java:396)
-// 	at oracle.jdbc.driver.T4C8Oall.processError(T4C8Oall.java:879)
-// 	at oracle.jdbc.driver.T4CTTIfun.receive(T4CTTIfun.java:450)
-// 	at oracle.jdbc.driver.T4CTTIfun.doRPC(T4CTTIfun.java:192)
-// 	at oracle.jdbc.driver.T4C8Oall.doOALL(T4C8Oall.java:531)
-// 	at oracle.jdbc.driver.T4CStatement.doOall8(T4CStatement.java:193)
-// 	at oracle.jdbc.driver.T4CStatement.executeForRows(T4CStatement.java:1033)
-// 	at oracle.jdbc.driver.OracleStatement.doExecuteWithTimeout(OracleStatement.java:1329)
-// 	at oracle.jdbc.driver.OracleStatement.executeInternal(OracleStatement.java:1909)
-// 	at oracle.jdbc.driver.OracleStatement.execute(OracleStatement.java:1871)
-// 	at oracle.jdbc.driver.OracleStatementWrapper.execute(OracleStatementWrapper.java:318)
-// 	at com.tpt.jbridge.core.db.DbResult.exec(DbResult.java:109)
-// 	at com.tpt.jbridge.core.db.DBServlet.exec(DBServlet.java:57)
-// 	at com.tpt.jbridge.core.db.DBServlet.doGet(DBServlet.java:19)
-// 	at javax.servlet.http.HttpServlet.service(HttpServlet.java:687)
-// 	at javax.servlet.http.HttpServlet.service(HttpServlet.java:790)
-// 	at io.undertow.servlet.handlers.ServletHandler.handleRequest(ServletHandler.java:85)
-// 	at io.undertow.servlet.handlers.security.ServletSecurityRoleHandler.handleRequest(ServletSecurityRoleHandler.java:61)
-// 	at io.undertow.servlet.handlers.ServletDispatchingHandler.handleRequest(ServletDispatchingHandler.java:36)
-// 	at io.undertow.servlet.handlers.security.SSLInformationAssociationHandler.handleRequest(SSLInformationAssociationHandler.java:131)
-// 	at io.undertow.servlet.handlers.security.ServletAuthenticationCallHandler.handleRequest(ServletAuthenticationCallHandler.java:56)
-// 	at io.undertow.server.handlers.PredicateHandler.handleRequest(PredicateHandler.java:43)
-// 	at io.undertow.security.handlers.AbstractConfidentialityHandler.handleRequest(AbstractConfidentialityHandler.java:45)
-// 	at io.undertow.servlet.handlers.security.ServletConfidentialityConstraintHandler.handleRequest(ServletConfidentialityConstraintHandler.java:63)
-// 	at io.undertow.security.handlers.AuthenticationMechanismsHandler.handleRequest(AuthenticationMechanismsHandler.java:58)
-// 	at io.undertow.servlet.handlers.security.CachedAuthenticatedSessionHandler.handleRequest(CachedAuthenticatedSessionHandler.java:70)
-// 	at io.undertow.security.handlers.SecurityInitialHandler.handleRequest(SecurityInitialHandler.java:76)
-// 	at io.undertow.server.handlers.PredicateHandler.handleRequest(PredicateHandler.java:43)
-// 	at io.undertow.server.handlers.PredicateHandler.handleRequest(PredicateHandler.java:43)
-// 	at io.undertow.servlet.handlers.ServletInitialHandler.handleFirstRequest(ServletInitialHandler.java:261)
-// 	at io.undertow.servlet.handlers.ServletInitialHandler.dispatchRequest(ServletInitialHandler.java:247)
-// 	at io.undertow.servlet.handlers.ServletInitialHandler.handleRequest(ServletInitialHandler.java:180)
-// 	at io.undertow.server.handlers.HttpContinueReadHandler.handleRequest(HttpContinueReadHandler.java:64)
-// 	at io.undertow.server.handlers.PathHandler.handleRequest(PathHandler.java:56)
-// 	at io.undertow.server.Connectors.executeRootHandler(Connectors.java:197)
-// 	at io.undertow.server.HttpServerExchange$1.run(HttpServerExchange.java:759)
-// 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
-// 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:615)
-// 	at java.lang.Thread.run(Thread.java:745)
-// `
 
 // func TestRunWithMaxErrorAndRescheduleIt(t *testing.T) {
 // 	workTest(t, nil, nil, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {

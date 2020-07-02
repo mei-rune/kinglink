@@ -68,7 +68,7 @@ func (job *Job) createCtx(ctx context.Context) context.Context {
 
 func (job *Job) rescheduleAt() time.Time {
 	duration := time.Duration(job.Retried*10) * time.Second
-	return time.Now().Add(duration).Add(5 + time.Second)
+	return time.Now().Add(duration).Add(5 * time.Second)
 }
 
 func (job *Job) getMaxRetry(jobMaxRetry int) int {
