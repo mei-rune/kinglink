@@ -1,0 +1,44 @@
+language: go
+go: "1.10"
+install:
+  - export PATH=$PATH:$HOME/gopath/bin
+  - go get github.com/fd/go-shellwords/shellwords
+  - go get github.com/garyburd/redigo/redis
+  - go get github.com/lib/pq
+  - go get github.com/go-sql-driver/mysql
+  - go get github.com/ziutek/mymysql/mysql
+  - go get github.com/ziutek/mymysql/native
+  - go get github.com/ziutek/mymysql/godrv
+  - go get github.com/mattn/go-sqlite3
+  - go get github.com/mitchellh/go-ps
+  - go get golang.org/x/text
+  - go get golang.org/x/crypto/md4
+  - go get gopkg.in/chanxuehong/wechat.v1
+  - go get github.com/rakyll/statik
+  - go get github.com/chanxuehong/util/security
+  - go get github.com/ThomsonReutersEikon/go-ntlm/ntlm
+  - go get github.com/kardianos/osext
+  
+services:
+  - redis-server
+  - postgres 
+  - mysql
+
+addons:
+  postgresql: "9.6"
+
+before_script:
+  - psql -c "CREATE USER delayedtest WITH PASSWORD '123456';" -U postgres
+  - psql -c "create database delayed_test with OWNER = delayedtest;" -U postgres
+  - mysql -e "CREATE USER 'delayedtest' IDENTIFIED BY '123456';"
+  - mysql -e "create database delayed_test character set utf8;"
+script:
+  - go test -v -redis.address=127.0.0.1:6379
+  - go test -v -redis.address=127.0.0.1:6379 -test_db_drv=mysql -test_db_url="travis:@tcp(localhost:3306)/delayed_test?autocommit=true&parseTime=true" -test.run=DbHandler
+  - go test -v -redis.address=127.0.0.1:6379 -test_db_drv=mymysql -test_db_url=tcp:127.0.0.1:3306*delayed_test/travis/  -test.run=DbHandler
+  - go test -v -redis.address=127.0.0.1:6379 -db_drv=mymysql -db_url=tcp:127.0.0.1:3306*delayed_test/travis/
+  - go test -v -redis.address=127.0.0.1:6379 -db_drv=mymysql -db_url=tcp:127.0.0.1:3306*delayed_test/travis/  -test_db_drv=mysql -test_db_url="travis:@tcp(localhost:3306)/delayed_test?autocommit=true&parseTime=true" -test.run=DbHandler
+  - go test -v -redis.address=127.0.0.1:6379 -db_drv=mymysql -db_url=tcp:127.0.0.1:3306*delayed_test/travis/ -test_db_drv=postgres -test_db_url="host=127.0.0.1 dbname=delayed_test user=delayedtest password=delayedtest sslmode=disable"  -test.run=DbHandler
+  - go test -v -redis.address=127.0.0.1:6379 -db_drv=mysql -db_url="travis:@tcp(localhost:3306)/delayed_test?autocommit=true&parseTime=true"
+  - go test -v -redis.address=127.0.0.1:6379 -db_drv=mysql -db_url="travis:@tcp(localhost:3306)/delayed_test?autocommit=true&parseTime=true" -test_db_drv=mymysql -test_db_url=tcp:127.0.0.1:3306*delayed_test/travis/  -test.run=DbHandler
+  - go test -v -redis.address=127.0.0.1:6379 -db_drv=mysql -db_url="travis:@tcp(localhost:3306)/delayed_test?autocommit=true&parseTime=true" -test_db_drv=postgres -test_db_url="host=127.0.0.1 dbname=delayed_test user=delayedtest password=delayedtest sslmode=disable"  -test.run=DbHandler
