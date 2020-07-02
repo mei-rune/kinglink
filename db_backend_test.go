@@ -25,7 +25,7 @@ func makeOpts() *Options {
 	}
 }
 
-func backendTest(t *testing.T, opts *Options, cb func(ctx context.Context, backend Backend, conn *sql.DB)) {
+func backendTest(t *testing.T, opts *Options, cb func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB)) {
 	if opts == nil {
 		opts = makeOpts()
 	}
@@ -38,11 +38,11 @@ func backendTest(t *testing.T, opts *Options, cb func(ctx context.Context, backe
 
 	var conn = backend.(interface{ Conn() *sql.DB }).Conn()
 
-	cb(context.Background(), backend, conn)
+	cb(context.Background(), opts, backend, conn)
 }
 
 func TestEnqueue(t *testing.T) {
-	backendTest(t, nil, func(ctx context.Context, backend Backend, conn *sql.DB) {
+	backendTest(t, nil, func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB) {
 		job := &Job{
 			RunAt:     time.Now().Add(-1 * time.Second),
 			Deadline:  time.Now().Add(1 * time.Second),
@@ -98,8 +98,14 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
+			now := time.Now()
 			assetTime(t, newjob.RunAt, job.RunAt)
 			assetTime(t, newjob.Deadline, job.Deadline)
+			assetTime(t, newjob.CreatedAt, now)
+			assetTime(t, newjob.UpdatedAt, now)
+			assetTime(t, newjob.LockedAt, now)
+
+			job.CreatedAt = newjob.CreatedAt
 		})
 
 		t.Run("retry", func(t *testing.T) {
@@ -117,7 +123,7 @@ func TestEnqueue(t *testing.T) {
 			}
 
 			opts := []cmp.Option{
-				cmpopts.IgnoreFields(Job{}, "ID", "LockedAt", "RunAt", "FailedAt", "Deadline", "CreatedAt", "UpdatedAt"),
+				cmpopts.IgnoreFields(Job{}, "ID", "LockedAt", "RunAt", "Deadline", "CreatedAt", "UpdatedAt"),
 				cmp.Comparer(func(a, b Payload) bool {
 					return a.String() == b.String()
 				}),
@@ -126,6 +132,7 @@ func TestEnqueue(t *testing.T) {
 			job.LockedBy = "abc"
 			job.LastError = ""
 			job.Retried = 2
+			job.FailedAt = time.Time{}
 
 			newjob.RunAt = newjob.RunAt.Local()
 			newjob.Deadline = newjob.Deadline.Local()
@@ -135,8 +142,12 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
+			now := time.Now()
 			assetTime(t, newjob.RunAt, runAt)
 			assetTime(t, newjob.Deadline, job.Deadline)
+			assetTime(t, newjob.CreatedAt, job.CreatedAt)
+			assetTime(t, newjob.UpdatedAt, now)
+			assetTime(t, newjob.LockedAt, now)
 		})
 
 		t.Run("retry with error", func(t *testing.T) {
@@ -154,7 +165,7 @@ func TestEnqueue(t *testing.T) {
 			}
 
 			opts := []cmp.Option{
-				cmpopts.IgnoreFields(Job{}, "ID", "LockedAt", "RunAt", "FailedAt", "Deadline", "CreatedAt", "UpdatedAt"),
+				cmpopts.IgnoreFields(Job{}, "ID", "LockedAt", "RunAt", "Deadline", "CreatedAt", "UpdatedAt"),
 				cmp.Comparer(func(a, b Payload) bool {
 					return a.String() == b.String()
 				}),
@@ -163,6 +174,7 @@ func TestEnqueue(t *testing.T) {
 			job.LockedBy = "abc"
 			job.LastError = "errrr"
 			job.Retried = 2
+			job.FailedAt = time.Time{}
 
 			newjob.RunAt = newjob.RunAt.Local()
 			newjob.Deadline = newjob.Deadline.Local()
@@ -172,8 +184,12 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
+			now := time.Now()
 			assetTime(t, newjob.RunAt, runAt)
 			assetTime(t, newjob.Deadline, job.Deadline)
+			assetTime(t, newjob.CreatedAt, job.CreatedAt)
+			assetTime(t, newjob.UpdatedAt, now)
+			assetTime(t, newjob.LockedAt, now)
 		})
 
 		t.Run("retry with maxerror", func(t *testing.T) {
@@ -211,8 +227,12 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
+			now := time.Now()
 			assetTime(t, newjob.RunAt, runAt)
 			assetTime(t, newjob.Deadline, job.Deadline)
+			assetTime(t, newjob.CreatedAt, job.CreatedAt)
+			assetTime(t, newjob.UpdatedAt, now)
+			assetTime(t, newjob.LockedAt, now)
 
 			_, e = conn.Exec("update tpt_kl_jobs set last_error = null")
 			if e != nil {
@@ -270,7 +290,7 @@ func assetTime(t *testing.T, actual, excepted time.Time) {
 }
 
 func TestPriority(t *testing.T) {
-	backendTest(t, nil, func(ctx context.Context, backend Backend, conn *sql.DB) {
+	backendTest(t, nil, func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB) {
 		job := &Job{
 			RunAt:     time.Now().Add(-1 * time.Second),
 			Deadline:  time.Now().Add(1 * time.Second),
@@ -320,69 +340,97 @@ func TestPriority(t *testing.T) {
 	})
 }
 
-// func TestGetWithLocked(t *testing.T) {
-// 	backendTest(t, func(backend *dbBackend) {
-// 		e := backend.enqueue(1, 0, "", 0, "aa", time.Time{}, map[string]interface{}{"type": "test"})
-// 		if nil != e {
-// 			t.Error(e)
-// 			return
-// 		}
+func TestGetWithLocked(t *testing.T) {
+	backendTest(t, nil, func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB) {
+		job := &Job{
+			RunAt:     time.Now().Add(-1 * time.Second),
+			Deadline:  time.Now().Add(1 * time.Second),
+			Timeout:   10,
+			Priority:  12,
+			Retried:   13,
+			MaxRetry:  14,
+			Queue:     "test",
+			Type:      "testtype",
+			Payload:   MakePayload(nil, map[string]interface{}{"a": "b"}),
+			UUID:      "uuidtest",
+			FailedAt:  time.Now().Add(2 * time.Second),
+			LastError: "error",
+			LockedAt:  time.Now().Add(3 * time.Second),
+			LockedBy:  "by",
+			CreatedAt: time.Now().Add(4 * time.Second),
+			UpdatedAt: time.Now().Add(5 * time.Second),
+		}
 
-// 		if strings.Contains(*db_drv, "odbc_with_mssql") {
-// 			_, e = backend.db.Exec("UPDATE " + *table_name + " SET locked_at = SYSUTCDATETIME(), locked_by = 'aa'")
-// 		} else {
-// 			_, e = backend.db.Exec("UPDATE " + *table_name + " SET locked_at = now(), locked_by = 'aa'")
-// 		}
-// 		if nil != e {
-// 			t.Error(e)
-// 			return
-// 		}
+		e := backend.Enqueue(ctx, job)
+		if e != nil {
+			t.Error(e)
+			return
+		}
 
-// 		w := &worker{min_priority: -1, max_priority: -1, name: "aa_pid:123", max_run_time: 1 * time.Minute}
-// 		job, e := backend.reserve(w)
-// 		if nil != e {
-// 			t.Error(e)
-// 			return
-// 		}
+		_, e = conn.Exec("UPDATE " + opts.Tablename + " SET locked_at = now(), locked_by = 'aa'")
+		if e != nil {
+			t.Error(e)
+			return
+		}
 
-// 		if nil != job {
-// 			t.Error("excepted job is nil, actual is not nil")
-// 			return
-// 		}
-// 	})
-// }
+		newjob, e := backend.Fetch(ctx, "a", nil)
+		if e != nil {
+			t.Error(e)
+			return
+		}
 
-// func TestGetWithFailed(t *testing.T) {
-// 	backendTest(t, func(backend *dbBackend) {
-// 		e := backend.enqueue(1, 0, "", 0, "aa", time.Time{}, map[string]interface{}{"type": "test"})
-// 		if nil != e {
-// 			t.Error(e)
-// 			return
-// 		}
+		if newjob != nil {
+			t.Error("excepted job is nil, actual is not nil")
+			return
+		}
+	})
+}
 
-// 		if strings.Contains(*db_drv, "odbc_with_mssql") {
-// 			_, e = backend.db.Exec("UPDATE " + *table_name + " SET failed_at = SYSUTCDATETIME(), last_error = 'aa'")
-// 		} else {
-// 			_, e = backend.db.Exec("UPDATE " + *table_name + " SET failed_at = now(), last_error = 'aa'")
-// 		}
-// 		if nil != e {
-// 			t.Error(e)
-// 			return
-// 		}
+func TestGetWithFailed(t *testing.T) {
+	backendTest(t, nil, func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB) {
+		job := &Job{
+			RunAt:     time.Now().Add(-1 * time.Second),
+			Deadline:  time.Now().Add(1 * time.Second),
+			Timeout:   10,
+			Priority:  12,
+			Retried:   13,
+			MaxRetry:  14,
+			Queue:     "test",
+			Type:      "testtype",
+			Payload:   MakePayload(nil, map[string]interface{}{"a": "b"}),
+			UUID:      "uuidtest",
+			FailedAt:  time.Now().Add(2 * time.Second),
+			LastError: "error",
+			LockedAt:  time.Now().Add(3 * time.Second),
+			LockedBy:  "by",
+			CreatedAt: time.Now().Add(4 * time.Second),
+			UpdatedAt: time.Now().Add(5 * time.Second),
+		}
 
-// 		w := &worker{min_priority: -1, max_priority: -1, name: "aa_pid:123", max_run_time: 1 * time.Minute}
-// 		job, e := backend.reserve(w)
-// 		if nil != e {
-// 			t.Error(e)
-// 			return
-// 		}
+		e := backend.Enqueue(ctx, job)
+		if e != nil {
+			t.Error(e)
+			return
+		}
 
-// 		if nil != job {
-// 			t.Error("excepted job is nil, actual is not nil")
-// 			return
-// 		}
-// 	})
-// }
+		_, e = conn.Exec("UPDATE " + opts.Tablename + " SET failed_at = now(), last_error = 'aa'")
+		if e != nil {
+			t.Error(e)
+			return
+		}
+
+		newjob, e := backend.Fetch(ctx, "a", nil)
+		if e != nil {
+			t.Error(e)
+			return
+		}
+
+		if newjob != nil {
+			t.Error("excepted job is nil, actual is not nil")
+			return
+		}
+	})
+}
 
 // func TestLockedJobInGet(t *testing.T) {
 // 	backendTest(t, func(backend *dbBackend) {

@@ -15,7 +15,7 @@ func workTest(t *testing.T, opts *Options, mux *ServeMux, cb func(ctx context.Co
 		opts = makeOpts()
 	}
 
-	backendTest(t, opts, func(ctx context.Context, backend Backend, conn *sql.DB) {
+	backendTest(t, opts, func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB) {
 		w, err := newWorker(opts, mux, backend)
 		if err != nil {
 			t.Error(err)
@@ -195,7 +195,6 @@ func TestRunErrorAndRescheduleIt(t *testing.T) {
 		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.Tablename+" WHERE failed_at IS NOT NULL", 0)
 	})
 }
-
 
 func TestRunMaxLenErrorAndRescheduleIt(t *testing.T) {
 	mux := NewServeMux()
