@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -112,6 +113,35 @@ func TestRunErrorAndNoRescheduleIt(t *testing.T) {
 	mux := NewServeMux()
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
 		return errors.New("ok error")
+	}))
+	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
+		if nil != e {
+			t.Error(e)
+			return
+		}
+
+		assertCount(t, w, conn, 1)
+
+		success, failure, e := w.workOff(ctx, 1)
+		if e != nil {
+			t.Error(e)
+		}
+		if success != 0 {
+			t.Error("want 0 got", success)
+		}
+		if failure != 1 {
+			t.Error("want 1 got", failure)
+		}
+
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.Tablename+" WHERE failed_at IS NOT NULL", 1)
+	})
+}
+
+func TestRunMaxLenErrorAndNoRescheduleIt(t *testing.T) {
+	mux := NewServeMux()
+	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+		return errors.New(strings.Repeat("aaa", 2000))
 	}))
 	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
 		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
@@ -414,93 +444,5 @@ func TestRunAgain(t *testing.T) {
 // 		if 0 != count {
 // 			t.Error("excepted jobs is empty, actual is", count)
 // 		}
-// 	})
-// }
-
-// func TestRunWithMaxErrorAndRescheduleIt(t *testing.T) {
-// 	workTest(t, nil, nil, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
-// 		e := backend.enqueue(1, 0, "", 1, "aa", time.Time{}, map[string]interface{}{"type": "test", "try_interval": "0s", "error": max_message_txt})
-// 		if nil != e {
-// 			t.Error(e)
-// 			return
-// 		}
-
-// 		select {
-// 		case <-test_chan:
-// 		case <-time.After(2 * time.Second):
-// 			t.Error("not recv")
-// 		}
-// 		time.Sleep(500 * time.Millisecond)
-
-// 		var count int64
-// 		for i := 0; i < 10; i++ {
-// 			time.Sleep(500 * time.Millisecond)
-
-// 			e = backend.db.QueryRow("SELECT count(*) FROM " + *table_name + " WHERE attempts <> 1").Scan(&count)
-// 			if nil != e {
-// 				t.Error(e)
-// 				return
-// 			}
-// 			if count == 0 {
-// 				break
-// 			}
-// 		}
-
-// 		row := backend.db.QueryRow("SELECT attempts, run_at, locked_at, locked_by, handler, last_error FROM " + *table_name)
-
-// 		var attempts int64
-// 		var run_at NullTime
-// 		var locked_at NullTime
-// 		var locked_by sql.NullString
-// 		var handler sql.NullString
-// 		var last_error sql.NullString
-
-// 		e = row.Scan(&attempts, &run_at, &locked_at, &locked_by, &handler, &last_error)
-// 		if nil != e {
-// 			t.Error(e)
-// 			return
-// 		}
-
-// 		if !run_at.Valid {
-// 			t.Error("excepted run_at is valid, actual is invalid")
-// 		}
-// 		if locked_at.Valid && !locked_at.Time.IsZero() {
-// 			t.Error("excepted locked_at is invalid, actual is valid - ", locked_at.Time)
-// 		}
-// 		if locked_by.Valid {
-// 			t.Error("excepted locked_by is invalid, actual is valid - ", locked_by.String)
-// 		}
-
-// 		if !handler.Valid {
-// 			t.Error("excepted handler is not empty, actual is invalid")
-// 		}
-
-// 		if !last_error.Valid {
-// 			t.Error("excepted last_error is not empty, actual is invalid")
-// 		}
-
-// 		if 1 != attempts {
-// 			t.Error("excepted attempts is '1', and actual is ", attempts)
-// 		}
-
-// 		//if !strings.Contains(*db_drv, "mysql") {
-// 		now := backend.db_time_now()
-// 		if math.Abs(float64(now.Unix()+5-run_at.Time.Unix())) < 1 {
-// 			t.Error("excepted run_at is ", run_at.Time, ", actual is", now)
-// 		}
-// 		//}
-// 		if !strings.Contains(handler.String, "\"type\": \"test\"") {
-// 			t.Error("excepted handler contains '\"type\": \"test\"', actual is ", handler.String)
-// 		}
-
-// 		if !strings.Contains(handler.String, "UpdatePayloadObject") {
-// 			t.Error("excepted handler contains 'UpdatePayloadObject', actual is ", handler.String)
-// 		}
-
-// 		excepted := `java.sql.SQLIntegrityConstraintViolationException: ORA-01400`
-// 		if !strings.Contains(last_error.String, excepted) {
-// 			t.Error("excepted run_at is '"+excepted+"', actual is", last_error.String)
-// 		}
-
 // 	})
 // }
