@@ -30,7 +30,7 @@ func RunAgain(ts time.Time) error {
 }
 
 func toRunAgain(e error) (time.Time, bool) {
-	again, ok := e.(*ErrAgain)
+	again, ok := e.(ErrAgain)
 	if ok {
 		return again.ts, true
 	}
@@ -75,7 +75,7 @@ type worker struct {
 	lastError atomic.Value
 }
 
-func newWorker(options Options, mux *ServeMux, backend Backend) (*worker, error) {
+func newWorker(options *Options, mux *ServeMux, backend Backend) (*worker, error) {
 	if options.MaxRunTime == 0 {
 		options.MaxRunTime = 15 * time.Minute
 	}
@@ -86,7 +86,7 @@ func newWorker(options Options, mux *ServeMux, backend Backend) (*worker, error)
 	name := options.NamePrefix + "_pid:" + strconv.FormatInt(int64(os.Getpid()), 10)
 	w := &worker{
 		name:    name,
-		options: options,
+		options: *options,
 		mux:     mux,
 		backend: backend,
 	}
@@ -261,14 +261,14 @@ func (w *worker) reschedule(ctx context.Context, runAgain bool, job *Job, nextTi
 		if nextTime.IsZero() {
 			nextTime = job.rescheduleAt()
 		}
-		return w.backend.Retry(ctx, job.ID, job.Retried, nextTime, job.Payload, err)
+		return w.backend.Retry(ctx, job.ID, job.Retried, nextTime, &job.Payload, err)
 	}
 
 	if attempts := job.Retried + 1; attempts <= job.getMaxRetry(w.options.MaxRetry) {
 		if nextTime.IsZero() {
 			nextTime = job.rescheduleAt()
 		}
-		return w.backend.Retry(ctx, job.ID, attempts, nextTime, job.Payload, err)
+		return w.backend.Retry(ctx, job.ID, attempts, nextTime, &job.Payload, err)
 	} else {
 		return w.failed(ctx, job, e)
 	}

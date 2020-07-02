@@ -1,129 +1,237 @@
 package kinglink
 
-// import (
-// 	"database/sql"
-// 	"math"
-// 	"strings"
-// 	"testing"
-// 	"time"
-// )
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"testing"
+	"time"
+)
 
-// func workTest(t *testing.T, mux *ServeMux, cb func(w *worker, backend Backend)) {
+func workTest(t *testing.T, opts *Options, mux *ServeMux, cb func(ctx context.Context, w *worker, backend Backend, conn *sql.DB)) {
+	if opts == nil {
+		opts = makeOpts()
+	}
 
-// 	w, err := newWorker(Options{}, mux, backend)
-// 	if err != nil {
-// 		t.Error(err)
-// 		return
-// 	}
+	backendTest(t, opts, func(ctx context.Context, backend Backend, conn *sql.DB) {
+		w, err := newWorker(opts, mux, backend)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 
-// 		defer w.Close()
-// 		cb(w, w.backend)
-// }
+		cb(ctx, w, backend, conn)
+	})
+}
 
-// func TestWork(t *testing.T) {
-// 	workTest(t, func(w *worker, backend Backend) {
-// 		time.Sleep(1 * time.Second)
+func TestWork(t *testing.T) {
+	workTest(t, nil, nil, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+		_, _, e := w.workOff(ctx, 10)
+		if e != nil {
+			t.Error(e)
+		}
+	})
+}
 
-// 		_, _, e := w.workOff(10)
-// 		if nil != e {
-// 			t.Error(e)
-// 		}
-// 	})
-// }
+func TestRunJob(t *testing.T) {
+	c := make(chan string, 1)
+	mux := NewServeMux()
+	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+		fields, err := job.Payload.Fields()
+		if err != nil {
+			return err
+		}
 
-// func TestRunJob(t *testing.T) {
-// 	workTest(t, func(w *worker, backend Backend) {
-// 		e := backend.enqueue(1, 0, "", 1, "aa", time.Time{}, map[string]interface{}{"type": "test"})
-// 		if nil != e {
-// 			t.Error(e)
-// 			return
-// 		}
+		s, ok := fields["a"]
+		if !ok {
+			return errors.New("a is missing")
+		}
 
-// 		select {
-// 		case <-test_chan:
-// 			return
-// 		case <-time.After(2 * time.Second):
-// 			t.Error("not recv")
-// 		}
-// 	})
-// }
+		c <- fmt.Sprint(s)
+		return nil
+	}))
+	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
+		if nil != e {
+			t.Error(e)
+			return
+		}
 
-// func TestRunErrorAndRescheduleIt(t *testing.T) {
-// 	workTest(t, func(w *worker, backend Backend) {
-// 		e := backend.enqueue(1, 0, "", 0, "aa", time.Time{}, map[string]interface{}{"type": "test", "try_interval": "0s", "error": "throw a"})
-// 		if nil != e {
-// 			t.Error(e)
-// 			return
-// 		}
+		success, failure, e := w.workOff(ctx, 1)
+		if nil != e {
+			t.Error(e)
+		}
+		if success != 1 {
+			t.Error("want 1 got", success)
+		}
+		if failure != 0 {
+			t.Error("want 0 got", failure)
+		}
 
-// 		select {
-// 		case <-test_chan:
-// 		case <-time.After(2 * time.Second):
-// 			t.Error("not recv")
-// 		}
-// 		time.Sleep(500 * time.Millisecond)
+		select {
+		case s := <-c:
+			if s != "b" {
+				t.Error("want b got", s)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("not recv")
+		}
+	})
+}
 
-// 		row := backend.db.QueryRow("SELECT attempts, run_at, locked_at, locked_by, handler, last_error FROM " + *table_name)
+func assertSQLCount(t *testing.T, conn *sql.DB, sqlstr string, excepted int) {
+	var count int
+	row := conn.QueryRow(sqlstr)
+	err := row.Scan(&count)
+	if err != nil {
+		t.Error(err)
+		return
+	}
 
-// 		var attempts int64
-// 		var run_at NullTime
-// 		var locked_at NullTime
-// 		var locked_by sql.NullString
-// 		var handler sql.NullString
-// 		var last_error sql.NullString
+	if excepted != count {
+		t.Error("want", excepted, "got", count)
+	}
+}
 
-// 		e = row.Scan(&attempts, &run_at, &locked_at, &locked_by, &handler, &last_error)
-// 		if nil != e {
-// 			t.Error(e)
-// 			return
-// 		}
+func assertCount(t *testing.T, w *worker, conn *sql.DB, excepted int) {
+	var count int
+	row := conn.QueryRow("select count(*) from " + w.options.Tablename)
+	err := row.Scan(&count)
+	if err != nil {
+		t.Error(err)
+		return
+	}
 
-// 		if !run_at.Valid {
-// 			t.Error("excepted run_at is valid, actual is invalid")
-// 		}
-// 		if locked_at.Valid && !locked_at.Time.IsZero() {
-// 			t.Error("excepted locked_at is invalid, actual is valid - ", locked_at.Time)
-// 		}
-// 		if locked_by.Valid {
-// 			t.Error("excepted locked_by is invalid, actual is valid - ", locked_by.String)
-// 		}
+	if excepted != count {
+		t.Error("want", excepted, "got", count)
+	}
+}
 
-// 		if !handler.Valid {
-// 			t.Error("excepted handler is not empty, actual is invalid")
-// 		}
+func TestRunErrorAndNoRescheduleIt(t *testing.T) {
+	mux := NewServeMux()
+	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+		return errors.New("ok error")
+	}))
+	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
+		if nil != e {
+			t.Error(e)
+			return
+		}
 
-// 		if !last_error.Valid {
-// 			t.Error("excepted last_error is not empty, actual is invalid")
-// 		}
+		assertCount(t, w, conn, 1)
 
-// 		if 1 != attempts {
-// 			t.Error("excepted attempts is '1', and actual is ", attempts)
-// 		}
+		success, failure, e := w.workOff(ctx, 1)
+		if e != nil {
+			t.Error(e)
+		}
+		if success != 0 {
+			t.Error("want 0 got", success)
+		}
+		if failure != 1 {
+			t.Error("want 1 got", failure)
+		}
 
-// 		//if !strings.Contains(*db_drv, "mysql") {
-// 		now := backend.db_time_now()
-// 		if math.Abs(float64(now.Unix()+5-run_at.Time.Unix())) < 1 {
-// 			t.Error("excepted run_at is ", run_at.Time, ", actual is", now)
-// 		}
-// 		//}
-// 		if !strings.Contains(handler.String, "\"type\": \"test\"") {
-// 			t.Error("excepted handler contains '\"type\": \"test\"', actual is ", handler.String)
-// 		}
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.Tablename+" WHERE failed_at IS NOT NULL", 1)
+	})
+}
 
-// 		if !strings.Contains(handler.String, "UpdatePayloadObject") {
-// 			t.Error("excepted handler contains 'UpdatePayloadObject', actual is ", handler.String)
-// 		}
+func TestRunErrorAndRescheduleIt(t *testing.T) {
+	mux := NewServeMux()
+	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+		return errors.New("ok error")
+	}))
+	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(1))
+		if nil != e {
+			t.Error(e)
+			return
+		}
 
-// 		if "throw a" != last_error.String {
-// 			t.Error("excepted run_at is 'throw a', actual is", last_error.String)
-// 		}
+		assertCount(t, w, conn, 1)
 
-// 	})
-// }
+		success, failure, e := w.workOff(ctx, 1)
+		if e != nil {
+			t.Error(e)
+		}
+		if success != 0 {
+			t.Error("want 0 got", success)
+		}
+		if failure != 1 {
+			t.Error("want 1 got", failure)
+		}
+
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.Tablename+" WHERE failed_at IS NOT NULL", 0)
+	})
+}
+
+func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
+	mux := NewServeMux()
+	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+		return errors.New("ok error")
+	}))
+	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(2))
+		if nil != e {
+			t.Error(e)
+			return
+		}
+
+		assertCount(t, w, conn, 1)
+
+		success, failure, e := w.workOff(ctx, 3)
+		if e != nil {
+			t.Error(e)
+		}
+		if success != 0 {
+			t.Error("want 0 got", success)
+		}
+		if failure != 2 {
+			t.Error("want 2 got", failure)
+		}
+
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.Tablename+" WHERE failed_at IS NOT NULL", 0)
+	})
+}
+
+func TestRunAgait(t *testing.T) {
+	count := 2
+	mux := NewServeMux()
+	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+		if count <= 0 {
+			return nil
+		}
+		count--
+		return RunAgain(time.Now().Add(-1 * time.Second))
+	}))
+	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(1))
+		if nil != e {
+			t.Error(e)
+			return
+		}
+
+		assertCount(t, w, conn, 1)
+
+		success, failure, e := w.workOff(ctx, 3)
+		if e != nil {
+			t.Error(e)
+		}
+		if success != 3 {
+			t.Error("want 3 got", success)
+		}
+		if failure != 0 {
+			t.Error("want 0 got", failure)
+		}
+
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.Tablename, 0)
+	})
+}
 
 // func TestRunFailedAndNotDestoryIt2(t *testing.T) {
 // 	*default_destroy_failed_jobs = false
-// 	workTest(t, func(w *worker, backend Backend) {
+// 	workTest(t, nil, nil, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
 // 		e := backend.enqueue(1, 0, "", 1, "aa", time.Time{}, map[string]interface{}{"type": "test", "try_interval": "0s", "error": "throw a"})
 // 		if nil != e {
 // 			t.Error(e)
@@ -165,7 +273,7 @@ package kinglink
 
 // func TestRunFailedAndNotDestoryIt(t *testing.T) {
 // 	*default_destroy_failed_jobs = false
-// 	workTest(t, func(w *worker, backend Backend) {
+// 	workTest(t, nil, nil, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
 // 		e := backend.enqueue(1, 0, "", 1, "aa", time.Time{}, map[string]interface{}{"type": "test", "try_interval": "0s", "error": "throw a"})
 // 		if nil != e {
 // 			t.Error(e)
@@ -245,7 +353,7 @@ package kinglink
 
 // func TestRunFailedAndDestoryIt(t *testing.T) {
 // 	*default_destroy_failed_jobs = true
-// 	workTest(t, func(w *worker, backend Backend) {
+// 	workTest(t, nil, nil, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
 // 		e := backend.enqueue(1, 0, "", 1, "aa", time.Time{}, map[string]interface{}{"type": "test", "try_interval": "0s", "error": "throw a"})
 // 		if nil != e {
 // 			t.Error(e)
@@ -323,7 +431,7 @@ package kinglink
 // `
 
 // func TestRunWithMaxErrorAndRescheduleIt(t *testing.T) {
-// 	workTest(t, func(w *worker, backend Backend) {
+// 	workTest(t, nil, nil, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
 // 		e := backend.enqueue(1, 0, "", 1, "aa", time.Time{}, map[string]interface{}{"type": "test", "try_interval": "0s", "error": max_message_txt})
 // 		if nil != e {
 // 			t.Error(e)

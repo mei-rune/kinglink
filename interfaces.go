@@ -105,3 +105,7 @@ type Backend interface {
 	Fail(ctx context.Context, id interface{}, e string) error
 	Destroy(ctx context.Context, id interface{}) error
 }
+
+func Enqueue(ctx context.Context, backend Backend, typeName string, args map[string]interface{}, opts ...Option) error {
+	return backend.Enqueue(ctx, NewJob(typeName, args, opts...))
+}

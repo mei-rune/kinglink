@@ -18,12 +18,16 @@ var (
 	db_drv = flag.String("db_drv", "postgres", "the db driver")
 )
 
+func makeOpts() *Options {
+	return &Options{
+		DbDrv: *db_drv,
+		DbURL: *db_url,
+	}
+}
+
 func backendTest(t *testing.T, opts *Options, cb func(ctx context.Context, backend Backend, conn *sql.DB)) {
 	if opts == nil {
-		opts = &Options{
-			DbDrv: *db_drv,
-			DbURL: *db_url,
-		}
+		opts = makeOpts()
 	}
 	backend, e := NewBackend(opts)
 	if nil != e {
