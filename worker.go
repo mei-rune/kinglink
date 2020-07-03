@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/runner-mei/log"
 )
 
 // var work_error = expvar.NewString("worker")
@@ -85,7 +86,7 @@ func newWorker(options *Options, mux *ServeMux, backend Backend) (*worker, error
 	// advantages to overriding this with something which survives worker restarts:  Workers can
 	// safely resume working on tasks which are locked by themselves. The worker will assume that
 	// it crashed before.
-	name := options.NamePrefix + "_pid:" + strconv.FormatInt(int64(os.Getpid()), 10)
+	name := options.NamePrefix + "pid:" + strconv.FormatInt(int64(os.Getpid()), 10)
 	w := &worker{
 		name:    name,
 		options: *options,
@@ -95,30 +96,34 @@ func newWorker(options *Options, mux *ServeMux, backend Backend) (*worker, error
 	return w, nil
 }
 
-func (w *worker) Run(ctx context.Context, shutdown chan struct{}) {
-	w.say("Starting job worker")
+func (w *worker) Run(ctx context.Context, exitOnComplete bool, shutdown chan struct{}) {
+	logger := log.For(ctx).Named("kinglink").With(log.String("worker", w.name))
+
+	logger.Info("Starting job worker")
 
 	isRunning := true
 	for isRunning {
 		for isRunning {
 			now := time.Now()
 
-			success, failure, e := w.workOff(ctx, 10)
+			success, failure, e := w.workOff(ctx, logger, 10)
 			if e != nil {
-				log.Println(e)
 				w.lastError.Store(e.Error())
+
+				logger.Error("run error", log.Error(e))
 				break
 			}
 
-			if success == 0 {
-				if w.options.ExitOnComplete {
-					w.say("No more jobs available. Exiting")
-				}
-				return
+			if success == 0 && exitOnComplete {
+				isRunning = false
 			}
 
-			w.say(success, "jobs processed at ", float64(success)/time.Now().Sub(now).Seconds(), " j/s, ", failure, " failed")
 			w.lastError.Store("")
+
+			logger.Info("run ok",
+				log.Int("success", success),
+				log.Int("failure", failure),
+				log.Duration("elapsed", time.Now().Sub(now)))
 		}
 
 		select {
@@ -127,15 +132,16 @@ func (w *worker) Run(ctx context.Context, shutdown chan struct{}) {
 		case <-time.After(w.options.SleepDelay):
 		}
 	}
+	logger.Info("No more jobs available. Exiting")
 }
 
 // Do num jobs and return stats on success/failure.
 // Exit early if interrupted.
-func (w *worker) workOff(ctx context.Context, num int) (int, int, error) {
+func (w *worker) workOff(ctx context.Context, logger log.Logger, num int) (int, int, error) {
 	success, failure := 0, 0
 
 	for i := 0; i < num; i++ {
-		ok, e := w.reserveAndRunOneJob(ctx)
+		ok, e := w.reserveAndRunOneJob(ctx, logger)
 		if nil != e {
 			if e == ErrJobsEmpty {
 				return success, failure, nil
@@ -155,7 +161,7 @@ func (w *worker) workOff(ctx context.Context, num int) (int, int, error) {
 
 // Run the next job we can get an exclusive lock on.
 // If no jobs are left we return nil
-func (w *worker) reserveAndRunOneJob(ctx context.Context) (bool, error) {
+func (w *worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger) (bool, error) {
 	job, e := w.backend.Fetch(ctx, w.name, w.options.Queues)
 	if nil != e {
 		return false, e
@@ -165,34 +171,37 @@ func (w *worker) reserveAndRunOneJob(ctx context.Context) (bool, error) {
 		return false, ErrJobsEmpty
 	}
 
-	return w.run(ctx, job)
+	ctx = job.createCtx(ctx)
+	logger = log.For(ctx).With(log.Int64("id", job.ID),
+		log.String("uuid", job.UUID), log.String("type", job.Type))
+
+	return w.run(ctx, logger, job)
 }
 
-func (w *worker) run(ctx context.Context, job *Job) (bool, error) {
-	w.jobSay(job, "RUNNING")
+func (w *worker) run(ctx context.Context, logger log.Logger, job *Job) (bool, error) {
+	logger.Info("RUNNING")
 	now := time.Now()
 	e := w.invokeJob(ctx, job)
 	if nil != e {
 		if nextTime, need := toRunAgain(e); need {
-			w.jobSay(job, "COMPLETED and again (next_time = ", nextTime, ")")
-			e = w.reschedule(ctx, true, job, nextTime, nil)
+			logger.Info("COMPLETED and should again", log.Time("nextTime", nextTime))
+			e = w.reschedule(ctx, logger, true, job, nextTime, nil)
 			return true, e
 		} else if isDeserializationError(e) {
-			w.jobSay(job, "FAILED (", job.Retried, " prior attempts) with ", e)
-			e = w.failed(ctx, job, e)
+			logger.Info("FAILED (deserialization)", log.Int("retried", job.Retried), log.Int("maxRetry", job.MaxRetry), log.Error(e))
+			e = w.failed(ctx, logger, job, e)
 		} else {
-			e = w.handleFailedJob(ctx, job, e)
+			e = w.handleFailedJob(ctx, logger, job, e)
 		}
 		return false, e // work failed
 	}
 
-	w.jobSay(job, "COMPLETED after ", time.Now().Sub(now))
-	e = w.completeIt(ctx, job)
+	logger.Info("COMPLETED", log.Duration("elapsed", time.Now().Sub(now)))
+	e = w.completeIt(ctx, logger, job)
 	return true, e // did work
 }
 
 func (w *worker) invokeJob(ctx context.Context, job *Job) (err error) {
-	ctx = job.createCtx(ctx)
 	defer func() {
 		if e := recover(); nil != e {
 			msg := fmt.Sprintf("[panic]%v \r\n%s", e, debug.Stack())
@@ -234,27 +243,27 @@ func (w *worker) invokeJob(ctx context.Context, job *Job) (err error) {
 	// }
 }
 
-func (w *worker) completeIt(ctx context.Context, job *Job) error {
+func (w *worker) completeIt(ctx context.Context, logger log.Logger, job *Job) error {
 	return w.backend.Destroy(ctx, job.ID)
 }
 
-func (w *worker) failed(ctx context.Context, job *Job, e error) error {
+func (w *worker) failed(ctx context.Context, logger log.Logger, job *Job, e error) error {
 	if w.options.DestroyFailedJobs {
-		w.jobSay(job, "REMOVED permanently because of attempts = ", job.Retried, "and max_attempts = ", job.getMaxRetry(w.options.MaxRetry), " consecutive failures")
+		logger.Info("REMOVED permanently", log.Int("retried", job.Retried), log.Int("maxRetry", job.MaxRetry), log.Error(e))
 		return w.backend.Destroy(ctx, job.ID)
 	}
-	w.jobSay(job, "STOPPED permanently because of attempts = ", job.Retried, "and max_attempts = ", job.getMaxRetry(w.options.MaxRetry), " consecutive failures")
+	logger.Info("STOPPED permanently", log.Int("retried", job.Retried), log.Int("maxRetry", job.MaxRetry), log.Error(e))
 	return w.backend.Fail(ctx, job.ID, e.Error())
 }
 
-func (w *worker) handleFailedJob(ctx context.Context, job *Job, e error) error {
-	w.jobSay(job, "FAILED (", job.Retried, " attempts and", job.getMaxRetry(w.options.MaxRetry), " max_attempts) with ", e)
-	return w.reschedule(ctx, false, job, time.Time{}, e)
+func (w *worker) handleFailedJob(ctx context.Context, logger log.Logger, job *Job, e error) error {
+	logger.Info("FAILED", log.Int("retried", job.Retried), log.Int("maxRetry", job.MaxRetry), log.Error(e))
+	return w.reschedule(ctx, logger, false, job, time.Time{}, e)
 }
 
 // Reschedule the job in the future (when a job fails).
 // Uses an exponential scale depending on the number of failed attempts.
-func (w *worker) reschedule(ctx context.Context, runAgain bool, job *Job, nextTime time.Time, e error) error {
+func (w *worker) reschedule(ctx context.Context, logger log.Logger, runAgain bool, job *Job, nextTime time.Time, e error) error {
 	var err string
 	if e != nil {
 		err = e.Error()
@@ -272,20 +281,6 @@ func (w *worker) reschedule(ctx context.Context, runAgain bool, job *Job, nextTi
 		}
 		return w.backend.Retry(ctx, job.ID, attempts, nextTime, &job.Payload, err)
 	} else {
-		return w.failed(ctx, job, e)
+		return w.failed(ctx, logger, job, e)
 	}
-}
-
-func (w *worker) jobSay(job *Job, text ...interface{}) {
-	args := make([]interface{}, 0, 3+len(text))
-	args = append(args, "Job ", job.name(), " (id=", job.ID, ") ")
-	args = append(args, text...)
-	w.say(args...)
-}
-
-func (w *worker) say(text ...interface{}) {
-	args := make([]interface{}, 0, 3+len(text))
-	args = append(args, "[Worker(", w.name, ")] ")
-	args = append(args, text...)
-	log.Println(args...)
 }

@@ -8,9 +8,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/runner-mei/log"
 )
 
-func workTest(t *testing.T, opts *Options, mux *ServeMux, cb func(ctx context.Context, w *worker, backend Backend, conn *sql.DB)) {
+func workTest(t *testing.T, opts *Options, mux *ServeMux, cb func(ctx context.Context, logger log.Logger, w *worker, backend Backend, conn *sql.DB)) {
 	if opts == nil {
 		opts = makeOpts()
 	}
@@ -22,13 +24,13 @@ func workTest(t *testing.T, opts *Options, mux *ServeMux, cb func(ctx context.Co
 			return
 		}
 
-		cb(ctx, w, backend, conn)
+		cb(ctx, log.Empty(), w, backend, conn)
 	})
 }
 
 func TestWork(t *testing.T) {
-	workTest(t, nil, nil, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
-		_, _, e := w.workOff(ctx, 10)
+	workTest(t, nil, nil, func(ctx context.Context, logger log.Logger, w *worker, backend Backend, conn *sql.DB) {
+		_, _, e := w.workOff(ctx, logger, 10)
 		if e != nil {
 			t.Error(e)
 		}
@@ -52,14 +54,14 @@ func TestRunJob(t *testing.T) {
 		c <- fmt.Sprint(s)
 		return nil
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *worker, backend Backend, conn *sql.DB) {
 		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
 		if nil != e {
 			t.Error(e)
 			return
 		}
 
-		success, failure, e := w.workOff(ctx, 1)
+		success, failure, e := w.workOff(ctx, logger, 1)
 		if nil != e {
 			t.Error(e)
 		}
@@ -114,7 +116,7 @@ func TestRunErrorAndNoRescheduleIt(t *testing.T) {
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
 		return errors.New("ok error")
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *worker, backend Backend, conn *sql.DB) {
 		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
 		if nil != e {
 			t.Error(e)
@@ -123,7 +125,7 @@ func TestRunErrorAndNoRescheduleIt(t *testing.T) {
 
 		assertCount(t, w, conn, 1)
 
-		success, failure, e := w.workOff(ctx, 1)
+		success, failure, e := w.workOff(ctx, logger, 1)
 		if e != nil {
 			t.Error(e)
 		}
@@ -143,7 +145,7 @@ func TestRunMaxLenErrorAndNoRescheduleIt(t *testing.T) {
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
 		return errors.New(strings.Repeat("aaa", 2000))
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *worker, backend Backend, conn *sql.DB) {
 		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
 		if nil != e {
 			t.Error(e)
@@ -152,7 +154,7 @@ func TestRunMaxLenErrorAndNoRescheduleIt(t *testing.T) {
 
 		assertCount(t, w, conn, 1)
 
-		success, failure, e := w.workOff(ctx, 1)
+		success, failure, e := w.workOff(ctx, logger, 1)
 		if e != nil {
 			t.Error(e)
 		}
@@ -172,7 +174,7 @@ func TestRunErrorAndRescheduleIt(t *testing.T) {
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
 		return errors.New("ok error")
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *worker, backend Backend, conn *sql.DB) {
 		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(1))
 		if nil != e {
 			t.Error(e)
@@ -181,7 +183,7 @@ func TestRunErrorAndRescheduleIt(t *testing.T) {
 
 		assertCount(t, w, conn, 1)
 
-		success, failure, e := w.workOff(ctx, 1)
+		success, failure, e := w.workOff(ctx, logger, 1)
 		if e != nil {
 			t.Error(e)
 		}
@@ -201,7 +203,7 @@ func TestRunMaxLenErrorAndRescheduleIt(t *testing.T) {
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
 		return errors.New(strings.Repeat("aaa", 2000))
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *worker, backend Backend, conn *sql.DB) {
 		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(1))
 		if nil != e {
 			t.Error(e)
@@ -210,7 +212,7 @@ func TestRunMaxLenErrorAndRescheduleIt(t *testing.T) {
 
 		assertCount(t, w, conn, 1)
 
-		success, failure, e := w.workOff(ctx, 1)
+		success, failure, e := w.workOff(ctx, logger, 1)
 		if e != nil {
 			t.Error(e)
 		}
@@ -230,7 +232,7 @@ func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
 		return errors.New("ok error")
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *worker, backend Backend, conn *sql.DB) {
 		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(2))
 		if nil != e {
 			t.Error(e)
@@ -241,7 +243,7 @@ func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 
 		tryRun := 3
 		for i := 0; i < tryRun; i++ {
-			success, failure, e := w.workOff(ctx, 3)
+			success, failure, e := w.workOff(ctx, logger, 3)
 			if e != nil {
 				t.Error(e)
 			}
@@ -270,7 +272,7 @@ func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 			}
 		}
 
-		success, failure, e := w.workOff(ctx, 3)
+		success, failure, e := w.workOff(ctx, logger, 3)
 		if e != nil {
 			t.Error(e)
 		}
@@ -295,7 +297,7 @@ func TestRunAgain(t *testing.T) {
 		count--
 		return RunAgain(time.Now().Add(-1 * time.Second))
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *worker, backend Backend, conn *sql.DB) {
 		e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(1))
 		if nil != e {
 			t.Error(e)
@@ -304,7 +306,7 @@ func TestRunAgain(t *testing.T) {
 
 		assertCount(t, w, conn, 1)
 
-		success, failure, e := w.workOff(ctx, 3)
+		success, failure, e := w.workOff(ctx, logger, 3)
 		if e != nil {
 			t.Error(e)
 		}
@@ -321,7 +323,7 @@ func TestRunAgain(t *testing.T) {
 
 // func TestRunFailedAndNotDestoryIt2(t *testing.T) {
 // 	*default_destroy_failed_jobs = false
-// 	workTest(t, nil, nil, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+// 	workTest(t, nil, nil, func(ctx context.Context, logger log.Logger, w *worker,  backend Backend, conn *sql.DB) {
 // 		e := backend.enqueue(1, 0, "", 1, "aa", time.Time{}, map[string]interface{}{"type": "test", "try_interval": "0s", "error": "throw a"})
 // 		if nil != e {
 // 			t.Error(e)
@@ -363,7 +365,7 @@ func TestRunAgain(t *testing.T) {
 
 // func TestRunFailedAndNotDestoryIt(t *testing.T) {
 // 	*default_destroy_failed_jobs = false
-// 	workTest(t, nil, nil, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+// 	workTest(t, nil, nil, func(ctx context.Context, logger log.Logger, w *worker,  backend Backend, conn *sql.DB) {
 // 		e := backend.enqueue(1, 0, "", 1, "aa", time.Time{}, map[string]interface{}{"type": "test", "try_interval": "0s", "error": "throw a"})
 // 		if nil != e {
 // 			t.Error(e)
@@ -443,7 +445,7 @@ func TestRunAgain(t *testing.T) {
 
 // func TestRunFailedAndDestoryIt(t *testing.T) {
 // 	*default_destroy_failed_jobs = true
-// 	workTest(t, nil, nil, func(ctx context.Context, w *worker, backend Backend, conn *sql.DB) {
+// 	workTest(t, nil, nil, func(ctx context.Context, logger log.Logger, w *worker,  backend Backend, conn *sql.DB) {
 // 		e := backend.enqueue(1, 0, "", 1, "aa", time.Time{}, map[string]interface{}{"type": "test", "try_interval": "0s", "error": "throw a"})
 // 		if nil != e {
 // 			t.Error(e)
