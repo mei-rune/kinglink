@@ -67,6 +67,8 @@ type Options struct {
 	Conn *sql.DB `json:"-"`
 }
 
+const defaultMaxRunTime = 15 * time.Minute
+
 type worker struct {
 	name      string
 	options   Options

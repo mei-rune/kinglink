@@ -252,6 +252,10 @@ func NewBackend(opts *Options) (Backend, error) {
 }
 
 func newPgBackend(opts *Options) (Backend, error) {
+	if opts.MaxRunTime == 0 {
+		opts.MaxRunTime = defaultMaxRunTime
+	}
+
 	backend := &pgBackend{
 		dbBackend: dbBackend{
 			dbDrv:       opts.DbDrv,
