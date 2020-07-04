@@ -27,6 +27,7 @@ func workTest(t *testing.T, opts *Options, mux *ServeMux, cb func(ctx context.Co
 		}
 
 		logger := log.NewStdLogger(stdlog.New(os.Stderr, "", stdlog.LstdFlags|stdlog.Lshortfile))
+		logger = log.For(ctx, logger)
 		ctx = log.ContextWithLogger(ctx, logger)
 		cb(ctx, logger, w, backend, conn)
 	})

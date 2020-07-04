@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"flag"
+	stdlog "log"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/runner-mei/log"
 )
 
 var (
@@ -38,7 +41,10 @@ func backendTest(t *testing.T, opts *Options, cb func(ctx context.Context, opts 
 
 	var conn = backend.(interface{ Conn() *sql.DB }).Conn()
 
-	cb(context.Background(), opts, backend, conn)
+	logger := log.NewStdLogger(stdlog.New(os.Stderr, "", stdlog.LstdFlags|stdlog.Lshortfile))
+	ctx := log.ContextWithLogger(context.Background(), logger)
+
+	cb(ctx, opts, backend, conn)
 }
 
 func TestEnqueue(t *testing.T) {

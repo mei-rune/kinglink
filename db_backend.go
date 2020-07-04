@@ -10,6 +10,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
+	"github.com/runner-mei/log"
 	_ "github.com/ziutek/mymysql/godrv"
 )
 
@@ -52,6 +53,14 @@ func (backend *dbBackend) clearLocks(workerName string) error {
 	return I18nError(backend.dbDrv, e)
 }
 
+func (backend *dbBackend) log(ctx context.Context, sqlstring string, args []interface{}, err error) {
+	if err != nil {
+		log.For(ctx).Info(backend.insertSQLString, log.Stringer("args", log.SQLArgs(args)), log.Error(err))
+	} else {
+		log.For(ctx).Info(backend.insertSQLString, log.Stringer("args", log.SQLArgs(args)))
+	}
+}
+
 func (backend *dbBackend) Enqueue(ctx context.Context, job *Job) error {
 	queue := &job.Queue
 	if job.Queue == "" {
@@ -68,6 +77,7 @@ func (backend *dbBackend) Enqueue(ctx context.Context, job *Job) error {
 	}
 
 	_, err := backend.conn.ExecContext(ctx, backend.insertSQLString, job.Priority, job.MaxRetry, queue, job.UUID, job.Type, &job.Payload, job.Timeout, deadline, runAt)
+	backend.log(ctx, backend.insertSQLString, []interface{}{job.Priority, job.MaxRetry, queue, job.UUID, job.Type, &job.Payload, job.Timeout, deadline, runAt}, err)
 	return err
 }
 
@@ -154,6 +164,7 @@ func (backend *dbBackend) readJobFromRow(row interface {
 func (backend *dbBackend) Retry(ctx context.Context, id interface{}, retried int, nextTime time.Time, payload interface{}, err string) error {
 	if len(err) == 0 {
 		_, e := backend.conn.ExecContext(ctx, backend.retryNoErrorSQLString, retried, nextTime, payload, id)
+		backend.log(ctx, backend.retryNoErrorSQLString, []interface{}{retried, nextTime, payload, id}, e)
 		return e
 	}
 
@@ -161,6 +172,7 @@ func (backend *dbBackend) Retry(ctx context.Context, id interface{}, retried int
 		err = err[:1900] + "\r\n===========================\r\n**error message is overflow**"
 	}
 	_, e := backend.conn.ExecContext(ctx, backend.retryErrorSQLString, retried, nextTime, payload, err, id)
+	backend.log(ctx, backend.retryNoErrorSQLString, []interface{}{retried, nextTime, payload, err, id}, e)
 	return e
 }
 
@@ -169,11 +181,13 @@ func (backend *dbBackend) Fail(ctx context.Context, id interface{}, err string) 
 		err = err[:1900] + "\r\n===========================\r\n**error message is overflow**"
 	}
 	_, e := backend.conn.ExecContext(ctx, backend.replyErrorSQLString, err, id)
+	backend.log(ctx, backend.replyErrorSQLString, []interface{}{err, id}, e)
 	return e
 }
 
 func (backend *dbBackend) Destroy(ctx context.Context, id interface{}) error {
 	_, e := backend.conn.ExecContext(ctx, backend.deleteSQLString, id)
+	backend.log(ctx, backend.deleteSQLString, []interface{}{id}, e)
 
 	if nil != e && sql.ErrNoRows != e {
 		return I18nError(backend.dbDrv, e)
@@ -227,6 +241,7 @@ func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []strin
 	now := time.Now()
 	// fmt.Println(sb.String(), now, name, now, now.Truncate(backend.maxRunTime), name)
 	rows, e := backend.conn.QueryContext(ctx, sb.String(), now, name, now, now.Truncate(backend.maxRunTime), name)
+	backend.log(ctx, sb.String(), []interface{}{now, name, now, now.Truncate(backend.maxRunTime)}, e)
 	if nil != e {
 		if sql.ErrNoRows == e {
 			return nil, nil
