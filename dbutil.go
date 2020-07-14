@@ -2,6 +2,7 @@ package kinglink
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
@@ -19,6 +20,72 @@ var (
 	_ driver.Valuer = &NullTime{}
 	_ sql.Scanner   = &NullTime{}
 )
+
+type DBRunner interface {
+	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}
+
+type TxDBRunner interface {
+	DBRunner
+
+	Commit() error
+	Rollback() error
+}
+
+type txKeyType struct{}
+
+func (*txKeyType) String() string {
+	return "kinglink-tx-key"
+}
+
+var txKey = &txKeyType{}
+
+func WithDbConnection(ctx context.Context, tx DBRunner) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, txKey, tx)
+}
+
+func WithTx(ctx context.Context, tx TxDBRunner) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, txKey, tx)
+}
+
+func DbConnectionFromContext(ctx context.Context) DBRunner {
+	if ctx == nil {
+		return nil
+	}
+	v := ctx.Value(txKey)
+	if v == nil {
+		return nil
+	}
+	dbRnner, ok := v.(DBRunner)
+	if ok {
+		return dbRnner
+	}
+	return nil
+}
+
+func TxFromContext(ctx context.Context) TxDBRunner {
+	if ctx == nil {
+		return nil
+	}
+	v := ctx.Value(txKey)
+	if v == nil {
+		return nil
+	}
+	dbRnner, ok := v.(TxDBRunner)
+	if ok {
+		return dbRnner
+	}
+	return nil
+}
 
 // NullTime represents an time that may be null.
 // NullTime implements the Scanner interface so

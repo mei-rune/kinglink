@@ -68,13 +68,14 @@ func TestEnqueue(t *testing.T) {
 			UpdatedAt: time.Now().Add(5 * time.Second),
 		}
 
-		e := backend.Enqueue(ctx, job)
-		if nil != e {
-			t.Error(e)
-			return
-		}
-
 		t.Run("fetch", func(t *testing.T) {
+			backend.ClearAll(ctx)
+			_, e := backend.Enqueue(ctx, job)
+			if nil != e {
+				t.Error(e)
+				return
+			}
+
 			newjob, e := backend.Fetch(ctx, "tw", nil)
 			if nil != e {
 				t.Error(e)
@@ -115,8 +116,15 @@ func TestEnqueue(t *testing.T) {
 		})
 
 		t.Run("retry", func(t *testing.T) {
+			backend.ClearAll(ctx)
+			id, e := backend.Enqueue(ctx, job)
+			if nil != e {
+				t.Error(e)
+				return
+			}
+
 			runAt := time.Now().Add(-1 * time.Minute)
-			e = backend.Retry(ctx, job.ID, 2, runAt, &job.Payload, "")
+			e = backend.Retry(ctx, id, 2, runAt, &job.Payload, "")
 			if e != nil {
 				t.Error(e)
 				return
@@ -157,8 +165,15 @@ func TestEnqueue(t *testing.T) {
 		})
 
 		t.Run("retry with error", func(t *testing.T) {
+			backend.ClearAll(ctx)
+			id, e := backend.Enqueue(ctx, job)
+			if nil != e {
+				t.Error(e)
+				return
+			}
+
 			runAt := time.Now().Add(-2 * time.Minute)
-			e = backend.Retry(ctx, job.ID, 2, runAt, &job.Payload, "errrr")
+			e = backend.Retry(ctx, id, 2, runAt, &job.Payload, "errrr")
 			if e != nil {
 				t.Error(e)
 				return
@@ -199,10 +214,17 @@ func TestEnqueue(t *testing.T) {
 		})
 
 		t.Run("retry with maxerror", func(t *testing.T) {
+			backend.ClearAll(ctx)
+			id, e := backend.Enqueue(ctx, job)
+			if nil != e {
+				t.Error(e)
+				return
+			}
+
 			exceptedError := strings.Repeat("a", 1900) + "\r\n===========================\r\n**error message is overflow**"
 
 			runAt := time.Now().Add(-2 * time.Minute)
-			e = backend.Retry(ctx, job.ID, 2, runAt, &job.Payload, strings.Repeat("a", 8010))
+			e = backend.Retry(ctx, id, 2, runAt, &job.Payload, strings.Repeat("a", 8010))
 			if e != nil {
 				t.Error(e)
 				return
@@ -248,9 +270,15 @@ func TestEnqueue(t *testing.T) {
 		})
 
 		t.Run("reply with error", func(t *testing.T) {
-			exceptedError := strings.Repeat("a", 1900) + "\r\n===========================\r\n**error message is overflow**"
+			backend.ClearAll(ctx)
+			id, e := backend.Enqueue(ctx, job)
+			if nil != e {
+				t.Error(e)
+				return
+			}
 
-			e = backend.Fail(ctx, job.ID, strings.Repeat("a", 8010))
+			exceptedError := strings.Repeat("a", 1900) + "\r\n===========================\r\n**error message is overflow**"
+			e = backend.Fail(ctx, id, strings.Repeat("a", 8010))
 			if e != nil {
 				t.Error(e)
 				return
@@ -267,7 +295,7 @@ func TestEnqueue(t *testing.T) {
 
 			var failedAt time.Time
 			var lastError string
-			e = conn.QueryRow("select failed_at, last_error from tpt_kl_jobs").Scan(&failedAt, &lastError)
+			e = conn.QueryRow("select created_at, last_error from "+opts.ResultTablename).Scan(&failedAt, &lastError)
 			if e != nil {
 				t.Error(e)
 				return
@@ -316,7 +344,7 @@ func TestPriority(t *testing.T) {
 			UpdatedAt: time.Now().Add(5 * time.Second),
 		}
 
-		e := backend.Enqueue(ctx, job)
+		_, e := backend.Enqueue(ctx, job)
 		if nil != e {
 			t.Error(e)
 			return
@@ -325,7 +353,7 @@ func TestPriority(t *testing.T) {
 			copyed := *job
 			copyed.Priority += i
 			copyed.UUID = copyed.UUID + strconv.Itoa(i)
-			e := backend.Enqueue(ctx, &copyed)
+			_, e := backend.Enqueue(ctx, &copyed)
 			if nil != e {
 				t.Error(e)
 				return
@@ -367,13 +395,13 @@ func TestGetWithLocked(t *testing.T) {
 			UpdatedAt: time.Now().Add(5 * time.Second),
 		}
 
-		e := backend.Enqueue(ctx, job)
+		_, e := backend.Enqueue(ctx, job)
 		if e != nil {
 			t.Error(e)
 			return
 		}
 
-		_, e = conn.Exec("UPDATE " + opts.Tablename + " SET locked_at = now(), locked_by = 'aa'")
+		_, e = conn.Exec("UPDATE " + opts.RunningTablename + " SET locked_at = now(), locked_by = 'aa'")
 		if e != nil {
 			t.Error(e)
 			return
@@ -413,13 +441,13 @@ func TestLockedJobInGet(t *testing.T) {
 			UpdatedAt: time.Now().Add(5 * time.Second),
 		}
 
-		e := backend.Enqueue(ctx, job)
+		_, e := backend.Enqueue(ctx, job)
 		if e != nil {
 			t.Error(e)
 			return
 		}
 
-		_, e = conn.Exec("UPDATE " + opts.Tablename + " SET locked_at = now() - interval '1h', locked_by = 'aa'")
+		_, e = conn.Exec("UPDATE " + opts.RunningTablename + " SET locked_at = now() - interval '1h', locked_by = 'aa'")
 		if nil != e {
 			t.Error(e)
 			return
@@ -459,13 +487,14 @@ func TestGetWithFailed(t *testing.T) {
 			UpdatedAt: time.Now().Add(5 * time.Second),
 		}
 
-		e := backend.Enqueue(ctx, job)
+		id, e := backend.Enqueue(ctx, job)
 		if e != nil {
 			t.Error(e)
 			return
 		}
 
-		_, e = conn.Exec("UPDATE " + opts.Tablename + " SET failed_at = now(), last_error = 'aa'")
+		e = backend.Fail(ctx, id, "aa")
+		// _, e = conn.Exec("UPDATE " + opts.Tablename + " SET failed_at = now(), last_error = 'aa'")
 		if e != nil {
 			t.Error(e)
 			return

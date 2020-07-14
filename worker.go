@@ -47,18 +47,19 @@ func isDeserializationError(e error) bool {
 }
 
 type Options struct {
-	DbDrv     string
-	DbURL     string
-	Tablename string
-
-	NamePrefix  string
-	MinPriority int
-	MaxPriority int
-	MaxRetry    int
-	MaxRunTime  time.Duration
-	SleepDelay  time.Duration
-	Queues      []string
-	ReadAhead   int
+	DbDrv            string
+	DbURL            string
+	RunningTablename string
+	ResultTablename  string
+	ViewTablename    string
+	NamePrefix       string
+	MinPriority      int
+	MaxPriority      int
+	MaxRetry         int
+	MaxRunTime       time.Duration
+	SleepDelay       time.Duration
+	Queues           []string
+	ReadAhead        int
 
 	// By default failed jobs are destroyed after too many attempts. If you want to keep them around
 	// (perhaps to inspect the reason for the failure), set this to false.
@@ -70,7 +71,7 @@ type Options struct {
 
 const defaultMaxRunTime = 15 * time.Minute
 
-type worker struct {
+type Worker struct {
 	name      string
 	options   Options
 	mux       *ServeMux
@@ -78,7 +79,7 @@ type worker struct {
 	lastError atomic.Value
 }
 
-func newWorker(options *Options, mux *ServeMux, backend Backend) (*worker, error) {
+func NewWorker(options *Options, mux *ServeMux, backend Backend) (*Worker, error) {
 	if options.MaxRunTime == 0 {
 		options.MaxRunTime = 15 * time.Minute
 	}
@@ -87,7 +88,7 @@ func newWorker(options *Options, mux *ServeMux, backend Backend) (*worker, error
 	// safely resume working on tasks which are locked by themselves. The worker will assume that
 	// it crashed before.
 	name := options.NamePrefix + "pid:" + strconv.FormatInt(int64(os.Getpid()), 10)
-	w := &worker{
+	w := &Worker{
 		name:    name,
 		options: *options,
 		mux:     mux,
@@ -96,7 +97,7 @@ func newWorker(options *Options, mux *ServeMux, backend Backend) (*worker, error
 	return w, nil
 }
 
-func (w *worker) Run(ctx context.Context, exitOnComplete bool, shutdown chan struct{}) {
+func (w *Worker) Run(ctx context.Context, exitOnComplete bool, shutdown chan struct{}) {
 	logger := log.For(ctx).Named("kinglink").With(log.String("worker", w.name))
 
 	logger.Info("Starting job worker")
@@ -137,7 +138,7 @@ func (w *worker) Run(ctx context.Context, exitOnComplete bool, shutdown chan str
 
 // Do num jobs and return stats on success/failure.
 // Exit early if interrupted.
-func (w *worker) workOff(ctx context.Context, logger log.Logger, num int) (int, int, error) {
+func (w *Worker) workOff(ctx context.Context, logger log.Logger, num int) (int, int, error) {
 	success, failure := 0, 0
 
 	for i := 0; i < num; i++ {
@@ -161,7 +162,7 @@ func (w *worker) workOff(ctx context.Context, logger log.Logger, num int) (int, 
 
 // Run the next job we can get an exclusive lock on.
 // If no jobs are left we return nil
-func (w *worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger) (bool, error) {
+func (w *Worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger) (bool, error) {
 	job, e := w.backend.Fetch(ctx, w.name, w.options.Queues)
 	if nil != e {
 		return false, e
@@ -178,7 +179,7 @@ func (w *worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger) (bo
 	return w.run(ctx, logger, job)
 }
 
-func (w *worker) run(ctx context.Context, logger log.Logger, job *Job) (bool, error) {
+func (w *Worker) run(ctx context.Context, logger log.Logger, job *Job) (bool, error) {
 	logger.Info("RUNNING")
 	now := time.Now()
 	e := w.invokeJob(ctx, job)
@@ -201,7 +202,7 @@ func (w *worker) run(ctx context.Context, logger log.Logger, job *Job) (bool, er
 	return true, e // did work
 }
 
-func (w *worker) invokeJob(ctx context.Context, job *Job) (err error) {
+func (w *Worker) invokeJob(ctx context.Context, job *Job) (err error) {
 	defer func() {
 		if e := recover(); nil != e {
 			msg := fmt.Sprintf("[panic]%v \r\n%s", e, debug.Stack())
@@ -209,9 +210,14 @@ func (w *worker) invokeJob(ctx context.Context, job *Job) (err error) {
 		}
 	}()
 
+	_, e := job.Payload.Fields()
+	if e != nil {
+		return deserializationError(errors.New("payload invalid: " + e.Error()))
+	}
+
 	var cancel context.CancelFunc
 	ctx, cancel = context.WithTimeout(ctx, job.execTimeout(w.options.MaxRunTime))
-	e := w.mux.RunJob(ctx, job)
+	e = w.mux.RunJob(ctx, job)
 	if e != context.DeadlineExceeded {
 		cancel()
 	}
@@ -243,11 +249,11 @@ func (w *worker) invokeJob(ctx context.Context, job *Job) (err error) {
 	// }
 }
 
-func (w *worker) completeIt(ctx context.Context, logger log.Logger, job *Job) error {
+func (w *Worker) completeIt(ctx context.Context, logger log.Logger, job *Job) error {
 	return w.backend.Destroy(ctx, job.ID)
 }
 
-func (w *worker) failed(ctx context.Context, logger log.Logger, job *Job, e error) error {
+func (w *Worker) failed(ctx context.Context, logger log.Logger, job *Job, e error) error {
 	if w.options.DestroyFailedJobs {
 		logger.Info("REMOVED permanently", log.Int("retried", job.Retried), log.Int("maxRetry", job.MaxRetry), log.Error(e))
 		return w.backend.Destroy(ctx, job.ID)
@@ -256,14 +262,14 @@ func (w *worker) failed(ctx context.Context, logger log.Logger, job *Job, e erro
 	return w.backend.Fail(ctx, job.ID, e.Error())
 }
 
-func (w *worker) handleFailedJob(ctx context.Context, logger log.Logger, job *Job, e error) error {
+func (w *Worker) handleFailedJob(ctx context.Context, logger log.Logger, job *Job, e error) error {
 	logger.Info("FAILED", log.Int("retried", job.Retried), log.Int("maxRetry", job.MaxRetry), log.Error(e))
 	return w.reschedule(ctx, logger, false, job, time.Time{}, e)
 }
 
 // Reschedule the job in the future (when a job fails).
 // Uses an exponential scale depending on the number of failed attempts.
-func (w *worker) reschedule(ctx context.Context, logger log.Logger, runAgain bool, job *Job, nextTime time.Time, e error) error {
+func (w *Worker) reschedule(ctx context.Context, logger log.Logger, runAgain bool, job *Job, nextTime time.Time, e error) error {
 	var err string
 	if e != nil {
 		err = e.Error()
