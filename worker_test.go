@@ -14,13 +14,13 @@ import (
 	"github.com/runner-mei/log"
 )
 
-func workTest(t *testing.T, opts *Options, mux *ServeMux, cb func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, conn *sql.DB)) {
+func workTest(t *testing.T, opts *DbOptions, wopts *WorkOptions, mux *ServeMux, cb func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB)) {
 	if opts == nil {
 		opts = makeOpts()
 	}
 
-	backendTest(t, opts, func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB) {
-		w, err := NewWorker(opts, mux, backend)
+	backendTest(t, opts, nil, func(ctx context.Context, dbopts *DbOptions, wopts *WorkOptions, backend Backend, conn *sql.DB) {
+		w, err := NewWorker(wopts, mux, backend)
 		if err != nil {
 			t.Error(err)
 			return
@@ -29,12 +29,12 @@ func workTest(t *testing.T, opts *Options, mux *ServeMux, cb func(ctx context.Co
 		logger := log.NewStdLogger(stdlog.New(os.Stderr, "", stdlog.LstdFlags|stdlog.Lshortfile))
 		logger = log.For(ctx, logger)
 		ctx = log.ContextWithLogger(ctx, logger)
-		cb(ctx, logger, w, backend, conn)
+		cb(ctx, logger, w, backend, dbopts, conn)
 	})
 }
 
 func TestWork(t *testing.T) {
-	workTest(t, nil, nil, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, nil, nil, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
 		_, _, e := w.workOff(ctx, logger, 10)
 		if e != nil {
 			t.Error(e)
@@ -59,7 +59,7 @@ func TestRunJob(t *testing.T) {
 		c <- fmt.Sprint(s)
 		return nil
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
 		_, e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
 		if nil != e {
 			t.Error(e)
@@ -104,35 +104,19 @@ func assertSQLCount(t *testing.T, conn *sql.DB, sqlstr string, excepted int) {
 	}
 }
 
-func assertCount(t *testing.T, w *Worker, conn *sql.DB, excepted int) {
-	t.Helper()
-
-	var count int
-	row := conn.QueryRow("select count(*) from " + w.options.RunningTablename)
-	err := row.Scan(&count)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-
-	if excepted != count {
-		t.Error("want", excepted, "got", count)
-	}
-}
-
 func TestRunErrorAndNoRescheduleIt(t *testing.T) {
 	mux := NewServeMux()
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
 		return errors.New("ok error")
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
 		_, e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
 		if nil != e {
 			t.Error(e)
 			return
 		}
 
-		assertCount(t, w, conn, 1)
+		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
 
 		success, failure, e := w.workOff(ctx, logger, 1)
 		if e != nil {
@@ -145,7 +129,7 @@ func TestRunErrorAndNoRescheduleIt(t *testing.T) {
 			t.Error("want 1 got", failure)
 		}
 
-		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.ResultTablename+" WHERE last_error IS NOT NULL", 1)
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+dbOpts.ResultTablename+" WHERE last_error IS NOT NULL", 1)
 	})
 }
 
@@ -154,14 +138,14 @@ func TestRunMaxLenErrorAndNoRescheduleIt(t *testing.T) {
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
 		return errors.New(strings.Repeat("aaa", 2000))
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
 		_, e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
 		if nil != e {
 			t.Error(e)
 			return
 		}
 
-		assertCount(t, w, conn, 1)
+		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
 
 		success, failure, e := w.workOff(ctx, logger, 1)
 		if e != nil {
@@ -174,7 +158,7 @@ func TestRunMaxLenErrorAndNoRescheduleIt(t *testing.T) {
 			t.Error("want 1 got", failure)
 		}
 
-		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.ResultTablename+" WHERE last_error IS NOT NULL", 1)
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+dbOpts.ResultTablename+" WHERE last_error IS NOT NULL", 1)
 	})
 }
 
@@ -183,14 +167,14 @@ func TestRunErrorAndRescheduleIt(t *testing.T) {
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
 		return errors.New("ok error")
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
 		_, e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(1))
 		if nil != e {
 			t.Error(e)
 			return
 		}
 
-		assertCount(t, w, conn, 1)
+		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
 
 		success, failure, e := w.workOff(ctx, logger, 1)
 		if e != nil {
@@ -203,7 +187,7 @@ func TestRunErrorAndRescheduleIt(t *testing.T) {
 			t.Error("want 1 got", failure)
 		}
 
-		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.ResultTablename+" WHERE last_error IS NOT NULL", 0)
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+dbOpts.ResultTablename+" WHERE last_error IS NOT NULL", 0)
 	})
 }
 
@@ -212,14 +196,14 @@ func TestRunMaxLenErrorAndRescheduleIt(t *testing.T) {
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
 		return errors.New(strings.Repeat("aaa", 2000))
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
 		_, e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(1))
 		if nil != e {
 			t.Error(e)
 			return
 		}
 
-		assertCount(t, w, conn, 1)
+		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
 
 		success, failure, e := w.workOff(ctx, logger, 1)
 		if e != nil {
@@ -232,7 +216,7 @@ func TestRunMaxLenErrorAndRescheduleIt(t *testing.T) {
 			t.Error("want 1 got", failure)
 		}
 
-		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.ResultTablename+" WHERE last_error IS NOT NULL", 0)
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+dbOpts.ResultTablename+" WHERE last_error IS NOT NULL", 0)
 	})
 }
 
@@ -241,14 +225,14 @@ func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
 		return errors.New("ok error")
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
 		_, e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(2))
 		if nil != e {
 			t.Error(e)
 			return
 		}
 
-		assertCount(t, w, conn, 1)
+		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
 
 		tryRun := 3
 		for i := 0; i < tryRun; i++ {
@@ -268,25 +252,25 @@ func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 			}
 
 			var runAt time.Time
-			e = conn.QueryRow("SELECT run_at FROM " + w.options.RunningTablename).Scan(&runAt)
+			e = conn.QueryRow("SELECT run_at FROM " + dbOpts.RunningTablename).Scan(&runAt)
 			if nil != e {
 				t.Error(e)
 				return
 			}
 
 			if i < tryRun-1 {
-				assetTime(t, runAt, time.Now().Add((time.Duration(i)*10+5)*time.Second))
+				assetTime(t, "runAt", runAt, time.Now().Add((time.Duration(i)*10+5)*time.Second))
 			}
 
-			_, e = conn.Exec("UPDATE "+w.options.RunningTablename+" SET run_at = $1", time.Now().Add(-1*time.Second))
+			_, e = conn.Exec("UPDATE "+dbOpts.RunningTablename+" SET run_at = $1", time.Now().Add(-1*time.Second))
 			if nil != e {
 				t.Error(e)
 				return
 			}
 		}
 
-		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.RunningTablename, 0)
-		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.ResultTablename+" WHERE last_error IS NOT NULL", 1)
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+dbOpts.RunningTablename, 0)
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+dbOpts.ResultTablename+" WHERE last_error IS NOT NULL", 1)
 	})
 }
 
@@ -300,14 +284,14 @@ func TestRunAgain(t *testing.T) {
 		count--
 		return RunAgain(time.Now().Add(-1 * time.Second))
 	}))
-	workTest(t, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, conn *sql.DB) {
+	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
 		_, e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(1))
 		if nil != e {
 			t.Error(e)
 			return
 		}
 
-		assertCount(t, w, conn, 1)
+		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
 
 		success, failure, e := w.workOff(ctx, logger, 3)
 		if e != nil {
@@ -320,14 +304,14 @@ func TestRunAgain(t *testing.T) {
 			t.Error("want 0 got", failure)
 		}
 
-		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.RunningTablename, 0)
-		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+w.options.ResultTablename+" WHERE last_error IS NULL", 1)
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+dbOpts.RunningTablename, 0)
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+dbOpts.ResultTablename+" WHERE last_error IS NULL", 1)
 	})
 }
 
 // func TestRunFailedAndNotDestoryIt2(t *testing.T) {
 // 	*default_destroy_failed_jobs = false
-// 	workTest(t, nil, nil, func(ctx context.Context, logger log.Logger, w *Worker,  backend Backend, conn *sql.DB) {
+// 	workTest(t, nil, nil, func(ctx context.Context, logger log.Logger, w *Worker,  backend Backend, dbOpts *DbOptions, conn *sql.DB) {
 // 		e := backend.enqueue(1, 0, "", 1, "aa", time.Time{}, map[string]interface{}{"type": "test", "try_interval": "0s", "error": "throw a"})
 // 		if nil != e {
 // 			t.Error(e)
@@ -369,7 +353,7 @@ func TestRunAgain(t *testing.T) {
 
 // func TestRunFailedAndNotDestoryIt(t *testing.T) {
 // 	*default_destroy_failed_jobs = false
-// 	workTest(t, nil, nil, func(ctx context.Context, logger log.Logger, w *Worker,  backend Backend, conn *sql.DB) {
+// 	workTest(t, nil, nil, func(ctx context.Context, logger log.Logger, w *Worker,  backend Backend, dbOpts *DbOptions, conn *sql.DB) {
 // 		e := backend.enqueue(1, 0, "", 1, "aa", time.Time{}, map[string]interface{}{"type": "test", "try_interval": "0s", "error": "throw a"})
 // 		if nil != e {
 // 			t.Error(e)
@@ -449,7 +433,7 @@ func TestRunAgain(t *testing.T) {
 
 // func TestRunFailedAndDestoryIt(t *testing.T) {
 // 	*default_destroy_failed_jobs = true
-// 	workTest(t, nil, nil, func(ctx context.Context, logger log.Logger, w *Worker,  backend Backend, conn *sql.DB) {
+// 	workTest(t, nil, nil, func(ctx context.Context, logger log.Logger, w *Worker,  backend Backend, dbOpts *DbOptions, conn *sql.DB) {
 // 		e := backend.enqueue(1, 0, "", 1, "aa", time.Time{}, map[string]interface{}{"type": "test", "try_interval": "0s", "error": "throw a"})
 // 		if nil != e {
 // 			t.Error(e)

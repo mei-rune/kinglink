@@ -141,10 +141,10 @@ type JobState struct {
 	Type string
 
 	// Payload holds data needed to process the task.
-	Payload map[string]interface{}
+	Payload Payload
 
-	// UUID is a unique identifier for each task.
-	UUID string
+	// ID is a unique identifier for each task.
+	ID interface{}
 
 	// Queue is a name this message should be enqueued to.
 	Queue string
@@ -188,11 +188,11 @@ type JobState struct {
 	// Status holds the status from the task.
 	Status TaskStatus
 
-	RunAt     time.Time
-	RunBy     string
-	LockedAt  time.Time
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	RunAt       time.Time
+	RunBy       string
+	LockedAt    time.Time
+	CreatedAt   time.Time
+	CompletedAt time.Time
 }
 
 type JobResult struct {
@@ -210,23 +210,30 @@ type JobResult struct {
 	UpdatedAt   time.Time
 }
 
-type Backend interface {
-	io.Closer
-
-	ClearAll(ctx context.Context) error
-
-	Enqueue(ctx context.Context, job *Job) (interface{}, error)
+type WorkBackend interface {
 	Fetch(ctx context.Context, name string, queues []string) (*Job, error)
-	Retry(ctx context.Context, id interface{}, attempts int, nextTime time.Time, payload interface{}, err string) error
+	Retry(ctx context.Context, id interface{}, attempts int, nextTime time.Time, payload *Payload, err string) error
 	Fail(ctx context.Context, id interface{}, e string) error
 	Destroy(ctx context.Context, id interface{}) error
+}
 
+type ServerBackend interface {
+	io.Closer
+	ClearAll(ctx context.Context) error
+
+	Cancel(ctx context.Context, id interface{}) error
+	Enqueue(ctx context.Context, job *Job) (interface{}, error)
 	DeleteResult(ctx context.Context, id interface{}) error
 	ClearWithTimeout(ctx context.Context, minutes int) error
 	GetResult(ctx context.Context, id interface{}) (*JobResult, error)
 
 	GetState(ctx context.Context, id interface{}) (*JobState, error)
 	GetStates(ctx context.Context, queues []string, offset, limit int) ([]JobState, error)
+}
+
+type Backend interface {
+	ServerBackend
+	WorkBackend
 }
 
 func Enqueue(ctx context.Context, backend Backend, typeName string, args map[string]interface{}, opts ...Option) (interface{}, error) {

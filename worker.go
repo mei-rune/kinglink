@@ -16,7 +16,10 @@ import (
 )
 
 // var work_error = expvar.NewString("worker")
-var ErrJobsEmpty = errors.New("jobs is empty")
+var (
+	ErrJobsEmpty   = errors.New("jobs is empty")
+	ErrJobNotFound = errors.New("job isnot found")
+)
 
 type ErrAgain struct {
 	ts time.Time
@@ -46,20 +49,15 @@ func isDeserializationError(e error) bool {
 	return strings.Contains(e.Error(), "[deserialization]")
 }
 
-type Options struct {
-	DbDrv            string
-	DbURL            string
-	RunningTablename string
-	ResultTablename  string
-	ViewTablename    string
-	NamePrefix       string
-	MinPriority      int
-	MaxPriority      int
-	MaxRetry         int
-	MaxRunTime       time.Duration
-	SleepDelay       time.Duration
-	Queues           []string
-	ReadAhead        int
+type WorkOptions struct {
+	NamePrefix  string
+	MinPriority int
+	MaxPriority int
+	MaxRetry    int
+	MaxRunTime  time.Duration
+	SleepDelay  time.Duration
+	Queues      []string
+	ReadAhead   int
 
 	// By default failed jobs are destroyed after too many attempts. If you want to keep them around
 	// (perhaps to inspect the reason for the failure), set this to false.
@@ -73,13 +71,13 @@ const defaultMaxRunTime = 15 * time.Minute
 
 type Worker struct {
 	name      string
-	options   Options
+	options   WorkOptions
 	mux       *ServeMux
-	backend   Backend
+	backend   WorkBackend
 	lastError atomic.Value
 }
 
-func NewWorker(options *Options, mux *ServeMux, backend Backend) (*Worker, error) {
+func NewWorker(options *WorkOptions, mux *ServeMux, backend WorkBackend) (*Worker, error) {
 	if options.MaxRunTime == 0 {
 		options.MaxRunTime = 15 * time.Minute
 	}

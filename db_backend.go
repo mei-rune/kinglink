@@ -15,6 +15,14 @@ import (
 	_ "github.com/ziutek/mymysql/godrv"
 )
 
+type DbOptions struct {
+	DbDrv            string
+	DbURL            string
+	RunningTablename string
+	ResultTablename  string
+	ViewTablename    string
+}
+
 // A job object that is persisted to the database.
 // Contains the work object as a YAML field.
 type dbBackend struct {
@@ -26,9 +34,10 @@ type dbBackend struct {
 	isOwer           bool
 	conn             *sql.DB
 
-	minPriority int
-	maxPriority int
-	maxRunTime  time.Duration
+	minPriority   int
+	maxPriority   int
+	maxRunTime    time.Duration
+	maxRunTimeSQL string
 
 	readQueuingSQLString    string
 	insertSQLString         string
@@ -45,6 +54,8 @@ type dbBackend struct {
 	queryStateSQLString     string
 	clearAllQueuing         string
 	clearAllResult          string
+	cancelQueuingSQLString  string
+	cancelResultSQLString   string
 }
 
 func (backend *dbBackend) Conn() *sql.DB {
@@ -79,19 +90,26 @@ func (backend *dbBackend) ClearAll(ctx context.Context) error {
 		conn = backend.conn
 	}
 
+	logger := log.For(ctx)
+
 	_, err := conn.ExecContext(ctx, backend.clearAllQueuing)
 	if err != nil {
+		logger.Info(backend.clearAllQueuing, log.Error(err))
 		return err
 	}
+	logger.Info(backend.clearAllQueuing)
+
 	_, err = conn.ExecContext(ctx, backend.clearAllResult)
 	if err != nil {
+		logger.Info(backend.clearAllResult, log.Error(err))
 		return err
 	}
+	logger.Info(backend.clearAllResult)
 	return nil
 }
 
 const stateFields = `id, priority, max_retry, retried, queue, uuid, type, payload,
-				  timeout, deadline, run_at, locked_at, run_by, last_error, created_at, updated_at`
+				  timeout, deadline, run_at, locked_at, run_by, last_error, completed_at, created_at, updated_at`
 
 func (backend *dbBackend) readStateFromRow(row interface {
 	Scan(dest ...interface{}) error
@@ -109,11 +127,12 @@ func (backend *dbBackend) readStateFromRow(row interface {
 	// var lockedBy sql.NullString
 	var runBy sql.NullString
 	var lastError sql.NullString
+	var completedAt NullTime
 	var createdAt NullTime
 	var updatedAt NullTime
 
 	e := row.Scan(
-		&job.UUID,
+		&job.ID,
 		&job.Priority,
 		&job.MaxRetry,
 		&retried,
@@ -127,6 +146,7 @@ func (backend *dbBackend) readStateFromRow(row interface {
 		&lockedAt,
 		&runBy,
 		&lastError,
+		&completedAt,
 		&createdAt,
 		&updatedAt)
 	if nil != e {
@@ -140,10 +160,10 @@ func (backend *dbBackend) readStateFromRow(row interface {
 		job.Retried = int(retried.Int64)
 	}
 	if uuid.Valid {
-		job.UUID = uuid.String
+		job.UniqueKey = uuid.String
 	}
 	if timeout.Valid {
-		job.Timeout = time.Duration(timeout.Int64).String()
+		job.Timeout = strconv.FormatInt(timeout.Int64, 10) + "s"
 	}
 	if deadline.Valid {
 		job.Deadline = deadline.Time
@@ -164,7 +184,23 @@ func (backend *dbBackend) readStateFromRow(row interface {
 		job.CreatedAt = createdAt.Time
 	}
 	if updatedAt.Valid {
-		job.UpdatedAt = updatedAt.Time
+		job.LastAt = updatedAt.Time
+	}
+	if completedAt.Valid {
+		job.CompletedAt = completedAt.Time
+		if job.LastError != "" {
+			job.Status = StatusFail
+		} else {
+			job.Status = StatusOK
+		}
+	} else {
+		if job.LastError != "" {
+			job.Status = StatusFailAndRequeueing
+		} else if lockedAt.Valid {
+			job.Status = StatusRunning
+		} else {
+			job.Status = StatusQueueing
+		}
 	}
 	return job, nil
 }
@@ -178,7 +214,7 @@ func (backend *dbBackend) GetState(ctx context.Context, id interface{}) (*JobSta
 		id = i64
 	}
 
-	row := backend.conn.QueryRowContext(ctx, backend.readResultSQLString, id)
+	row := backend.conn.QueryRowContext(ctx, backend.readStateSQLString, id)
 	jobResult, err := backend.readStateFromRow(row, nil)
 	if err != nil {
 		log.For(ctx).Info(backend.readStateSQLString, log.Stringer("args", log.SQLArgs{id}), log.Error(err))
@@ -187,77 +223,6 @@ func (backend *dbBackend) GetState(ctx context.Context, id interface{}) (*JobSta
 
 	log.For(ctx).Info(backend.readStateSQLString, log.Stringer("args", log.SQLArgs{id}))
 	return jobResult, nil
-}
-
-func (backend *dbBackend) GetStates(ctx context.Context, queues []string, offset, limit int) ([]JobState, error) {
-	var sb strings.Builder
-	sb.WriteString(backend.queryStateSQLString)
-	var args = make([]interface{}, 0, len(queues))
-	if len(queues) > 0 {
-		if len(queues) == 1 {
-			sb.WriteString(" WHERE queue = $1")
-			args = append(args, queues[0])
-		} else {
-			sb.WriteString(" WHERE queue in (")
-			for idx := range queues {
-				if idx != 0 {
-					sb.WriteString(",")
-				}
-				sb.WriteString("$")
-				args = append(args, queues[idx])
-				sb.WriteString(strconv.Itoa(len(args)))
-			}
-			sb.WriteString(")")
-		}
-	}
-
-	if offset > 0 {
-		if limit < 0 {
-			limit = 0
-		}
-	}
-
-	if limit > 0 || offset > 0 {
-		sb.WriteString(" LIMIT ")
-		sb.WriteString(strconv.Itoa(limit))
-
-		sb.WriteString(" OFFSET ")
-		sb.WriteString(strconv.Itoa(offset))
-	}
-
-	rows, err := backend.conn.QueryContext(ctx, sb.String(), args...)
-	if err != nil {
-		log.For(ctx).Error(backend.readStateSQLString, log.Stringer("args", log.SQLArgs(args)), log.Error(err))
-		return nil, err
-	}
-
-	defer rows.Close()
-
-	var jobResults = make([]JobState, 16)
-	count := 0
-	for rows.Next() {
-		if len(jobResults) >= count {
-			copyed := make([]JobState, 2*len(jobResults))
-			copy(copyed, jobResults)
-			jobResults = copyed
-		}
-
-		_, err := backend.readStateFromRow(rows, &jobResults[count])
-		if err != nil {
-			log.For(ctx).Error(backend.readStateSQLString, log.Stringer("args", log.SQLArgs(args)), log.Error(err))
-			return nil, err
-		}
-		count++
-	}
-	jobResults = jobResults[:count]
-
-	if rows.Err() != nil {
-		log.For(ctx).Error(backend.readStateSQLString, log.Stringer("args", log.SQLArgs(args)), log.Error(rows.Err()))
-		return nil, rows.Err()
-	}
-
-	log.For(ctx).Info(backend.readStateSQLString, log.Stringer("args", log.SQLArgs(args)))
-	return jobResults, nil
 }
 
 func (backend *dbBackend) DeleteResult(ctx context.Context, id interface{}) error {
@@ -514,19 +479,28 @@ func (backend *dbBackend) Get(ctx context.Context, id interface{}) (*Job, error)
 	return backend.readJobFromRow(row)
 }
 
-func (backend *dbBackend) Retry(ctx context.Context, id interface{}, retried int, nextTime time.Time, payload interface{}, err string) error {
+func (backend *dbBackend) Retry(ctx context.Context, id interface{}, retried int, nextTime time.Time, payload *Payload, err string) error {
 	if len(err) == 0 {
 		_, e := backend.conn.ExecContext(ctx, backend.retryNoErrorSQLString, retried, nextTime, payload, id)
-		backend.log(ctx, backend.retryNoErrorSQLString, []interface{}{retried, nextTime, payload, id}, e)
-		return e
+		if e != nil {
+			log.For(ctx).Info(backend.retryNoErrorSQLString, log.Stringer("args", log.SQLArgs{retried, nextTime, payload, id}), log.Error(e))
+			return e
+		}
+
+		log.For(ctx).Info(backend.retryNoErrorSQLString, log.Stringer("args", log.SQLArgs{retried, nextTime, payload, id}))
+		return nil
 	}
 
 	if len(err) > 2000 {
 		err = err[:1900] + "\r\n===========================\r\n**error message is overflow**"
 	}
 	_, e := backend.conn.ExecContext(ctx, backend.retryErrorSQLString, retried, nextTime, payload, err, id)
-	backend.log(ctx, backend.retryNoErrorSQLString, []interface{}{retried, nextTime, payload, err, id}, e)
-	return e
+	if e != nil {
+		log.For(ctx).Info(backend.retryErrorSQLString, log.Stringer("args", log.SQLArgs{retried, nextTime, payload, err, id}), log.Error(e))
+		return e
+	}
+	log.For(ctx).Info(backend.retryErrorSQLString, log.Stringer("args", log.SQLArgs{retried, nextTime, payload, err, id}))
+	return nil
 }
 
 func (backend *dbBackend) Fail(ctx context.Context, id interface{}, err string) error {
@@ -547,20 +521,67 @@ func (backend *dbBackend) Fail(ctx context.Context, id interface{}, err string) 
 func (backend *dbBackend) Destroy(ctx context.Context, id interface{}) error {
 	return backend.withTx(ctx, func(ctx context.Context, tx DBRunner) error {
 		_, e := tx.ExecContext(ctx, backend.copySQLString, id)
-		backend.log(ctx, backend.deleteSQLString, []interface{}{id}, e)
 		if nil != e {
+			log.For(ctx).Info(backend.copySQLString, log.Stringer("args", log.SQLArgs{id}), log.Error(e))
 			if e == sql.ErrNoRows {
 				return nil
 			}
 			return I18nError(backend.dbDrv, e)
 		}
+		log.For(ctx).Info(backend.copySQLString, log.Stringer("args", log.SQLArgs{id}))
+
 		_, e = tx.ExecContext(ctx, backend.deleteSQLString, id)
-		backend.log(ctx, backend.deleteSQLString, []interface{}{id}, e)
 		if nil != e && sql.ErrNoRows != e {
+			log.For(ctx).Info(backend.deleteSQLString, log.Stringer("args", log.SQLArgs{id}), log.Error(e))
 			return I18nError(backend.dbDrv, e)
 		}
+		log.For(ctx).Info(backend.deleteSQLString, log.Stringer("args", log.SQLArgs{id}))
 		return nil
 	})
+}
+
+func (backend *dbBackend) Cancel(ctx context.Context, id interface{}) error {
+	conn := DbConnectionFromContext(ctx)
+	if conn == nil {
+		conn = backend.conn
+	}
+
+	if s, ok := id.(string); ok {
+		i64, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return errors.New("argument type error: id must is int")
+		}
+		id = i64
+	}
+
+	result, err := conn.ExecContext(ctx, backend.cancelQueuingSQLString, id, backend.maxRunTime)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected > 0 {
+		return nil
+	}
+
+	result, err = conn.ExecContext(ctx, backend.cancelResultSQLString, id)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err = result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected > 0 {
+		return nil
+	}
+	return ErrJobNotFound
 }
 
 func (backend *dbBackend) withTx(ctx context.Context, cb func(ctx context.Context, tx DBRunner) error) error {
@@ -593,13 +614,87 @@ type pgBackend struct {
 	dbBackend
 }
 
+func (backend *pgBackend) GetStates(ctx context.Context, queues []string, offset, limit int) ([]JobState, error) {
+	var sb strings.Builder
+	sb.WriteString(backend.queryStateSQLString)
+	var args = make([]interface{}, 0, len(queues))
+	if len(queues) > 0 {
+		if len(queues) == 1 {
+			sb.WriteString(" WHERE queue = $1")
+			args = append(args, queues[0])
+		} else {
+			sb.WriteString(" WHERE queue in (")
+			for idx := range queues {
+				if idx != 0 {
+					sb.WriteString(",")
+				}
+				sb.WriteString("$")
+				args = append(args, queues[idx])
+				sb.WriteString(strconv.Itoa(len(args)))
+			}
+			sb.WriteString(")")
+		}
+	}
+
+	if offset > 0 {
+		if limit < 0 {
+			limit = 0
+		}
+	}
+
+	if limit > 0 || offset > 0 {
+		sb.WriteString(" LIMIT ")
+		sb.WriteString(strconv.Itoa(limit))
+
+		sb.WriteString(" OFFSET ")
+		sb.WriteString(strconv.Itoa(offset))
+	}
+
+	sqlStr := sb.String()
+	rows, err := backend.conn.QueryContext(ctx, sqlStr, args...)
+	if err != nil {
+		log.For(ctx).Error(sqlStr, log.Stringer("args", log.SQLArgs(args)), log.Error(err))
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	var jobResults = make([]JobState, 16)
+	count := 0
+	for rows.Next() {
+		if len(jobResults) >= count {
+			copyed := make([]JobState, 2*len(jobResults))
+			copy(copyed, jobResults)
+			jobResults = copyed
+		}
+
+		_, err := backend.readStateFromRow(rows, &jobResults[count])
+		if err != nil {
+			log.For(ctx).Error(sqlStr, log.Stringer("args", log.SQLArgs(args)), log.Error(err))
+			return nil, err
+		}
+		count++
+	}
+	jobResults = jobResults[:count]
+
+	if rows.Err() != nil {
+		log.For(ctx).Error(sqlStr, log.Stringer("args", log.SQLArgs(args)), log.Error(rows.Err()))
+		return nil, rows.Err()
+	}
+
+	log.For(ctx).Info(sqlStr, log.Stringer("args", log.SQLArgs(args)))
+	return jobResults, nil
+}
+
 func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []string) (*Job, error) {
 	var sb strings.Builder
 	sb.WriteString("UPDATE ")
 	sb.WriteString(backend.runningTablename)
-	sb.WriteString(" SET locked_at = $1, locked_by = $2 WHERE id in (SELECT id FROM ")
+	sb.WriteString(" SET locked_at = now(), locked_by = $1 WHERE id in (SELECT id FROM ")
 	sb.WriteString(backend.runningTablename)
-	sb.WriteString(" WHERE ((run_at IS NULL OR run_at < $3) AND (locked_at IS NULL OR locked_at < $4) OR locked_by = $5) AND failed_at IS NULL")
+	sb.WriteString(" WHERE ((run_at IS NULL OR run_at < now()) AND (locked_at IS NULL OR locked_at < (now() - interval '")
+	sb.WriteString(backend.maxRunTimeSQL)
+	sb.WriteString("')) OR locked_by = $2) AND failed_at IS NULL")
 
 	if backend.minPriority > 0 {
 		sb.WriteString(" AND priority >= ")
@@ -632,11 +727,12 @@ func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []strin
 	sb.WriteString(" ORDER BY priority ASC, run_at ASC  LIMIT 1) RETURNING ")
 	sb.WriteString(fieldsSqlString)
 
-	now := time.Now()
+	queryStr := sb.String()
 	// fmt.Println(sb.String(), now, name, now, now.Truncate(backend.maxRunTime), name)
-	rows, e := backend.conn.QueryContext(ctx, sb.String(), now, name, now, now.Truncate(backend.maxRunTime), name)
-	backend.log(ctx, sb.String(), []interface{}{now, name, now, now.Truncate(backend.maxRunTime)}, e)
+	rows, e := backend.conn.QueryContext(ctx, queryStr, name, name)
 	if nil != e {
+		log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(e))
+
 		if sql.ErrNoRows == e {
 			return nil, nil
 		}
@@ -644,70 +740,76 @@ func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []strin
 	}
 	defer rows.Close()
 
+	log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(e))
+
 	for rows.Next() {
 		return backend.readJobFromRow(rows)
 	}
 	return nil, nil
 }
 
-func NewBackend(opts *Options) (Backend, error) {
-	if opts.RunningTablename == "" {
-		opts.RunningTablename = "tpt_kl_jobs"
+func NewBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
+	if dbopts.RunningTablename == "" {
+		dbopts.RunningTablename = "tpt_kl_jobs"
 	}
-	if opts.ResultTablename == "" {
-		opts.ResultTablename = "tpt_kl_results"
+	if dbopts.ResultTablename == "" {
+		dbopts.ResultTablename = "tpt_kl_results"
 	}
-	if opts.ViewTablename == "" {
-		opts.ViewTablename = "tpt_kl_views"
+	if dbopts.ViewTablename == "" {
+		dbopts.ViewTablename = "tpt_kl_views"
 	}
-	if opts.DbDrv == "pq" || opts.DbDrv == "postgres" || opts.DbDrv == "postgresql" {
-		return newPgBackend(opts)
+	if dbopts.DbDrv == "pq" || dbopts.DbDrv == "postgres" || dbopts.DbDrv == "postgresql" {
+		return newPgBackend(dbopts, opts)
 	}
-	return nil, errors.New("db driver name '" + opts.DbDrv + "' is unknown")
+	return nil, errors.New("db driver name '" + dbopts.DbDrv + "' is unknown")
 }
 
-func newPgBackend(opts *Options) (Backend, error) {
+func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 	if opts.MaxRunTime == 0 {
 		opts.MaxRunTime = defaultMaxRunTime
 	}
+	maxRunTimeSQL := strconv.FormatInt(int64(opts.MaxRunTime.Seconds()), 10) + " Seconds"
 
 	backend := &pgBackend{
 		dbBackend: dbBackend{
-			dbDrv:                opts.DbDrv,
-			dbURL:                opts.DbURL,
-			runningTablename:     opts.RunningTablename,
-			resultTablename:      opts.ResultTablename,
-			viewTablename:        opts.ViewTablename,
+			dbDrv:                dbopts.DbDrv,
+			dbURL:                dbopts.DbURL,
+			runningTablename:     dbopts.RunningTablename,
+			resultTablename:      dbopts.ResultTablename,
+			viewTablename:        dbopts.ViewTablename,
 			isOwer:               false,
 			conn:                 opts.Conn,
 			minPriority:          opts.MinPriority,
 			maxPriority:          opts.MaxPriority,
 			maxRunTime:           opts.MaxRunTime,
-			readQueuingSQLString: "SELECT " + fieldsSqlString + " FROM " + opts.RunningTablename + " WHERE id = #{id}",
-			insertSQLString: "INSERT INTO " + opts.RunningTablename + "(priority, max_retry, retried, queue, uuid, type, payload, timeout, deadline, run_at, locked_at, locked_by, failed_at, last_error, created_at, updated_at)" +
+			maxRunTimeSQL:        maxRunTimeSQL,
+			readQueuingSQLString: "SELECT " + fieldsSqlString + " FROM " + dbopts.RunningTablename + " WHERE id = #{id}",
+			insertSQLString: "INSERT INTO " + dbopts.RunningTablename + "(priority, max_retry, retried, queue, uuid, type, payload, timeout, deadline, run_at, locked_at, locked_by, failed_at, last_error, created_at, updated_at)" +
 				" VALUES($1, $2, 0, $3, $4, $5, $6, $7, $8, $9, NULL, NULL, NULL, NULL, now(), now()) RETURNING id",
-			clearLocksSQLString: "UPDATE " + opts.RunningTablename + " SET locked_by = NULL, locked_at = NULL WHERE locked_by = $1",
-			retryNoErrorSQLString: "UPDATE " + opts.RunningTablename +
+			clearLocksSQLString: "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL WHERE locked_by = $1",
+			retryNoErrorSQLString: "UPDATE " + dbopts.RunningTablename +
 				" SET retried = $1, run_at = $2, payload=$3, failed_at=NULL, last_error=NULL, locked_at=NULL, locked_by=NULL, updated_at = now() WHERE id = $4",
-			retryErrorSQLString: "UPDATE " + opts.RunningTablename +
+			retryErrorSQLString: "UPDATE " + dbopts.RunningTablename +
 				" SET retried = $1, run_at = $2, payload=$3, failed_at=NULL, last_error=$4, locked_at=NULL, locked_by=NULL, updated_at=now() WHERE id = $5",
-			replyErrorSQLString: "UPDATE " + opts.RunningTablename +
+			replyErrorSQLString: "UPDATE " + dbopts.RunningTablename +
 				" SET last_error=$1, failed_at = now(), updated_at = now() WHERE id = $2",
-			deleteSQLString: "DELETE FROM " + opts.RunningTablename + " WHERE id = $1",
-			copySQLString: `INSERT INTO ` + opts.ResultTablename + ` SELECT id, priority, retried, queue, uuid, type, payload, locked_by as run_by, last_error, created_at, updated_at FROM ` +
-				opts.RunningTablename + ` WHERE id = $1`,
-			readResultSQLString:     "SELECT " + resultFields + " FROM " + opts.ResultTablename + " WHERE id = $1",
-			deleteResultSQLString:   "DELETE FROM " + opts.ResultTablename + " WHERE id = $1",
-			deleteResultWithTimeout: "DELETE FROM " + opts.ResultTablename + " WHERE (updated_at + - interval '%d Minutes') <  now()",
-			readStateSQLString:      "SELECT " + stateFields + " FROM " + opts.ViewTablename + " WHERE id = $1",
-			queryStateSQLString:     "SELECT " + stateFields + " FROM " + opts.ViewTablename,
-			clearAllQueuing:         "DELETE FROM " + opts.RunningTablename,
-			clearAllResult:          "DELETE FROM " + opts.ResultTablename,
+			deleteSQLString: "DELETE FROM " + dbopts.RunningTablename + " WHERE id = $1",
+			copySQLString: `INSERT INTO ` + dbopts.ResultTablename + ` SELECT id, priority, retried, queue, uuid, type, payload, locked_by as run_by, last_error, created_at, updated_at FROM ` +
+				dbopts.RunningTablename + ` WHERE id = $1`,
+			readResultSQLString:     "SELECT " + resultFields + " FROM " + dbopts.ResultTablename + " WHERE id = $1",
+			deleteResultSQLString:   "DELETE FROM " + dbopts.ResultTablename + " WHERE id = $1",
+			deleteResultWithTimeout: "DELETE FROM " + dbopts.ResultTablename + " WHERE (updated_at + - interval '%d Minutes') <  now()",
+			readStateSQLString:      "SELECT " + stateFields + " FROM " + dbopts.ViewTablename + " WHERE id = $1",
+			queryStateSQLString:     "SELECT " + stateFields + " FROM " + dbopts.ViewTablename,
+			clearAllQueuing:         "DELETE FROM " + dbopts.RunningTablename,
+			clearAllResult:          "DELETE FROM " + dbopts.ResultTablename,
+			cancelQueuingSQLString:  "DELETE FROM " + dbopts.RunningTablename + " WHERE id = $1 AND (locked_at IS NULL OR locked_at < (now() - interval '" + maxRunTimeSQL + "')) ",
+			cancelResultSQLString:   "DELETE FROM " + dbopts.ResultTablename + " WHERE id = $1",
 		},
 	}
 
 	if backend.conn == nil {
-		conn, e := sql.Open(opts.DbDrv, opts.DbURL)
+		conn, e := sql.Open(dbopts.DbDrv, dbopts.DbURL)
 		if nil != e {
 			return nil, e
 		}
@@ -764,8 +866,9 @@ func newPgBackend(opts *Options) (Backend, error) {
 				  deadline,
 				  run_at,
 				  locked_at,
-				  NULL AS run_by,
+				  locked_by AS run_by,
 				  last_error,
+				  NULL AS completed_at,
 				  created_at,
 				  updated_at
       FROM ` + backend.runningTablename + `
@@ -784,6 +887,7 @@ func newPgBackend(opts *Options) (Backend, error) {
 				  NULL AS locked_at,
 				  run_by,
 				  last_error,
+				  updated_at AS completed_at,
 				  created_at,
 				  updated_at
    FROM ` + backend.resultTablename + `;`

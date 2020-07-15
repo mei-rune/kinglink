@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"flag"
+	"fmt"
 	stdlog "log"
 	"os"
 	"strconv"
@@ -21,18 +22,21 @@ var (
 	db_drv = flag.String("db_drv", "postgres", "the db driver")
 )
 
-func makeOpts() *Options {
-	return &Options{
+func makeOpts() *DbOptions {
+	return &DbOptions{
 		DbDrv: *db_drv,
 		DbURL: *db_url,
 	}
 }
 
-func backendTest(t *testing.T, opts *Options, cb func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB)) {
+func backendTest(t *testing.T, opts *DbOptions, wopts *WorkOptions, cb func(ctx context.Context, opts *DbOptions, wopts *WorkOptions, backend Backend, conn *sql.DB)) {
 	if opts == nil {
 		opts = makeOpts()
 	}
-	backend, e := NewBackend(opts)
+	if wopts == nil {
+		wopts = &WorkOptions{}
+	}
+	backend, e := NewBackend(opts, wopts)
 	if nil != e {
 		t.Error(e)
 		return
@@ -44,11 +48,11 @@ func backendTest(t *testing.T, opts *Options, cb func(ctx context.Context, opts 
 	logger := log.NewStdLogger(stdlog.New(os.Stderr, "", stdlog.LstdFlags|stdlog.Lshortfile))
 	ctx := log.ContextWithLogger(context.Background(), logger)
 
-	cb(ctx, opts, backend, conn)
+	cb(ctx, opts, wopts, backend, conn)
 }
 
 func TestEnqueue(t *testing.T) {
-	backendTest(t, nil, func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB) {
+	backendTest(t, nil, nil, func(ctx context.Context, opts *DbOptions, wopts *WorkOptions, backend Backend, conn *sql.DB) {
 		job := &Job{
 			RunAt:     time.Now().Add(-1 * time.Second),
 			Deadline:  time.Now().Add(1 * time.Second),
@@ -106,16 +110,14 @@ func TestEnqueue(t *testing.T) {
 			}
 
 			now := time.Now()
-			assetTime(t, newjob.RunAt, job.RunAt)
-			assetTime(t, newjob.Deadline, job.Deadline)
-			assetTime(t, newjob.CreatedAt, now)
-			assetTime(t, newjob.UpdatedAt, now)
-			assetTime(t, newjob.LockedAt, now)
-
-			job.CreatedAt = newjob.CreatedAt
+			assetTime(t, "RunAt", newjob.RunAt, job.RunAt)
+			assetTime(t, "Deadline", newjob.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", newjob.CreatedAt, now)
+			assetTime(t, "UpdatedAt", newjob.UpdatedAt, now)
+			assetTime(t, "LockedAt", newjob.LockedAt, now)
 		})
 
-		t.Run("retry", func(t *testing.T) {
+		t.Run("retry_with_ok", func(t *testing.T) {
 			backend.ClearAll(ctx)
 			id, e := backend.Enqueue(ctx, job)
 			if nil != e {
@@ -130,6 +132,7 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
+			fmt.Println("============")
 			newjob, e := backend.Fetch(ctx, "abc", nil)
 			if nil != e {
 				t.Error(e)
@@ -143,13 +146,11 @@ func TestEnqueue(t *testing.T) {
 				}),
 			}
 
+			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
 			job.LockedBy = "abc"
 			job.LastError = ""
 			job.Retried = 2
 			job.FailedAt = time.Time{}
-
-			newjob.RunAt = newjob.RunAt.Local()
-			newjob.Deadline = newjob.Deadline.Local()
 
 			if !cmp.Equal(job, newjob, opts...) {
 				t.Error(cmp.Diff(job, newjob, opts...))
@@ -157,11 +158,51 @@ func TestEnqueue(t *testing.T) {
 			}
 
 			now := time.Now()
-			assetTime(t, newjob.RunAt, runAt)
-			assetTime(t, newjob.Deadline, job.Deadline)
-			assetTime(t, newjob.CreatedAt, job.CreatedAt)
-			assetTime(t, newjob.UpdatedAt, now)
-			assetTime(t, newjob.LockedAt, now)
+			assetTime(t, "RunAt", newjob.RunAt.Local(), runAt.Local())
+			assetTime(t, "Deadline", newjob.Deadline.Local(), job.Deadline)
+			assetTime(t, "CreatedAt", newjob.CreatedAt, now)
+			assetTime(t, "UpdatedAt", newjob.UpdatedAt, now)
+			assetTime(t, "LockedAt", newjob.LockedAt, now)
+
+			state, err := backend.GetState(ctx, id)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			opts = []cmp.Option{
+				cmpopts.IgnoreFields(JobState{}, "ID", "LockedAt", "RunAt", "Deadline", "CreatedAt", "LastAt"),
+				cmp.Comparer(func(a, b Payload) bool {
+					return a.String() == b.String()
+				}),
+			}
+
+			excepted := &JobState{
+				ID:        id,
+				Type:      job.Type,
+				Payload:   job.Payload,
+				UniqueKey: job.UUID,
+				Timeout:   strconv.Itoa(job.Timeout) + "s",
+				Queue:     job.Queue,
+				Priority:  job.Priority,
+				MaxRetry:  job.MaxRetry,
+				Retried:   job.Retried,
+				// LogMessages []string
+				LastError: job.LastError,
+				RunBy:     "abc",
+				Status:    StatusRunning,
+			}
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			assetTime(t, "RunAt", state.RunAt, runAt)
+			assetTime(t, "Deadline", state.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", state.CreatedAt, now)
+			assetTime(t, "LastAt", state.LastAt, now)
+			assetTime(t, "LockedAt", state.LockedAt, now)
+
 		})
 
 		t.Run("retry with error", func(t *testing.T) {
@@ -192,6 +233,7 @@ func TestEnqueue(t *testing.T) {
 				}),
 			}
 
+			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
 			job.LockedBy = "abc"
 			job.LastError = "errrr"
 			job.Retried = 2
@@ -206,11 +248,70 @@ func TestEnqueue(t *testing.T) {
 			}
 
 			now := time.Now()
-			assetTime(t, newjob.RunAt, runAt)
-			assetTime(t, newjob.Deadline, job.Deadline)
-			assetTime(t, newjob.CreatedAt, job.CreatedAt)
-			assetTime(t, newjob.UpdatedAt, now)
-			assetTime(t, newjob.LockedAt, now)
+			assetTime(t, "RunAt", newjob.RunAt, runAt)
+			assetTime(t, "Deadline", newjob.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", newjob.CreatedAt, now)
+			assetTime(t, "UpdatedAt", newjob.UpdatedAt, now)
+			assetTime(t, "LockedAt", newjob.LockedAt, now)
+
+			state, err := backend.GetState(ctx, id)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			opts = []cmp.Option{
+				cmpopts.IgnoreFields(JobState{}, "ID", "LockedAt", "RunAt", "Deadline", "CreatedAt", "LastAt"),
+				cmp.Comparer(func(a, b Payload) bool {
+					return a.String() == b.String()
+				}),
+			}
+
+			excepted := &JobState{
+				ID:        id,
+				Type:      job.Type,
+				Payload:   job.Payload,
+				UniqueKey: job.UUID,
+				Timeout:   strconv.Itoa(job.Timeout) + "s",
+				Queue:     job.Queue,
+				Priority:  job.Priority,
+				MaxRetry:  job.MaxRetry,
+				Retried:   job.Retried,
+				// LogMessages []string
+				LastError: job.LastError,
+				RunBy:     "abc",
+				Status:    StatusFailAndRequeueing,
+			}
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			assetTime(t, "RunAt", state.RunAt, runAt)
+			assetTime(t, "Deadline", state.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", state.CreatedAt, now)
+			assetTime(t, "LastAt", state.LastAt, now)
+			assetTime(t, "LockedAt", state.LockedAt, now)
+
+			t.Log("测试一下 GetStates")
+			states, err := backend.GetStates(ctx, nil, 0, 0)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			state = &states[0]
+
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			assetTime(t, "RunAt", state.RunAt, runAt)
+			assetTime(t, "Deadline", state.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", state.CreatedAt, now)
+			assetTime(t, "LastAt", state.LastAt, now)
+			assetTime(t, "LockedAt", state.LockedAt, now)
+
 		})
 
 		t.Run("retry with maxerror", func(t *testing.T) {
@@ -243,6 +344,7 @@ func TestEnqueue(t *testing.T) {
 				}),
 			}
 
+			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
 			job.LockedBy = "abc"
 			job.LastError = exceptedError
 			job.Retried = 2
@@ -256,11 +358,11 @@ func TestEnqueue(t *testing.T) {
 			}
 
 			now := time.Now()
-			assetTime(t, newjob.RunAt, runAt)
-			assetTime(t, newjob.Deadline, job.Deadline)
-			assetTime(t, newjob.CreatedAt, job.CreatedAt)
-			assetTime(t, newjob.UpdatedAt, now)
-			assetTime(t, newjob.LockedAt, now)
+			assetTime(t, "RunAt", newjob.RunAt, runAt)
+			assetTime(t, "Deadline", newjob.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", newjob.CreatedAt, now)
+			assetTime(t, "UpdatedAt", newjob.UpdatedAt, now)
+			assetTime(t, "LockedAt", newjob.LockedAt, now)
 
 			_, e = conn.Exec("update tpt_kl_jobs set last_error = null")
 			if e != nil {
@@ -269,7 +371,7 @@ func TestEnqueue(t *testing.T) {
 			}
 		})
 
-		t.Run("reply with error", func(t *testing.T) {
+		t.Run("check state when retry with ok", func(t *testing.T) {
 			backend.ClearAll(ctx)
 			id, e := backend.Enqueue(ctx, job)
 			if nil != e {
@@ -277,40 +379,325 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
-			exceptedError := strings.Repeat("a", 1900) + "\r\n===========================\r\n**error message is overflow**"
-			e = backend.Fail(ctx, id, strings.Repeat("a", 8010))
+			runAt := time.Now().Add(-1 * time.Minute)
+			e = backend.Retry(ctx, id, 2, runAt, &job.Payload, "")
 			if e != nil {
 				t.Error(e)
 				return
 			}
 
-			newjob, e := backend.Fetch(ctx, "abc", nil)
+			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
+			job.LockedBy = "abc"
+			job.LastError = ""
+			job.Retried = 2
+			job.FailedAt = time.Time{}
+
+			state, err := backend.GetState(ctx, id)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			opts := []cmp.Option{
+				cmpopts.IgnoreFields(JobState{}, "ID", "LockedAt", "RunAt", "Deadline", "CreatedAt", "LastAt"),
+				cmp.Comparer(func(a, b Payload) bool {
+					return a.String() == b.String()
+				}),
+			}
+
+			excepted := &JobState{
+				ID:        id,
+				Type:      job.Type,
+				Payload:   job.Payload,
+				UniqueKey: job.UUID,
+				Timeout:   strconv.Itoa(job.Timeout) + "s",
+				Queue:     job.Queue,
+				Priority:  job.Priority,
+				MaxRetry:  job.MaxRetry,
+				Retried:   job.Retried,
+				// LogMessages []string
+				LastError: job.LastError,
+				// RunBy:     "abc",
+				Status: StatusQueueing,
+			}
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			now := time.Now()
+			assetTime(t, "RunAt", state.RunAt, runAt)
+			assetTime(t, "Deadline", state.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", state.CreatedAt, now)
+			assetTime(t, "LastAt", state.LastAt, now)
+			assetTime(t, "LockedAt", state.LockedAt, now)
+
+			t.Log("测试一下 GetStates")
+			states, err := backend.GetStates(ctx, nil, 0, 0)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			state = &states[0]
+
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			assetTime(t, "RunAt", state.RunAt, runAt)
+			assetTime(t, "Deadline", state.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", state.CreatedAt, now)
+			assetTime(t, "LastAt", state.LastAt, now)
+			assetTime(t, "LockedAt", state.LockedAt, now)
+		})
+
+		t.Run("check state when retry with error", func(t *testing.T) {
+			backend.ClearAll(ctx)
+			id, e := backend.Enqueue(ctx, job)
 			if nil != e {
 				t.Error(e)
 				return
 			}
-			if newjob != nil {
-				t.Error("excepted null, got", newjob)
-			}
 
-			var failedAt time.Time
-			var lastError string
-			e = conn.QueryRow("select created_at, last_error from "+opts.ResultTablename).Scan(&failedAt, &lastError)
+			runAt := time.Now().Add(-2 * time.Minute)
+			e = backend.Retry(ctx, id, 2, runAt, &job.Payload, "errrr")
 			if e != nil {
 				t.Error(e)
 				return
 			}
 
-			assetTime(t, failedAt, time.Now())
-			if exceptedError != lastError {
-				t.Error("want", exceptedError)
-				t.Error("got ", lastError)
+			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
+			job.LockedBy = "abc"
+			job.LastError = "errrr"
+			job.Retried = 2
+			job.FailedAt = time.Time{}
+
+			state, err := backend.GetState(ctx, id)
+			if err != nil {
+				t.Error(err)
+				return
 			}
+
+			opts := []cmp.Option{
+				cmpopts.IgnoreFields(JobState{}, "ID", "LockedAt", "RunAt", "Deadline", "CreatedAt", "LastAt"),
+				cmp.Comparer(func(a, b Payload) bool {
+					return a.String() == b.String()
+				}),
+			}
+
+			excepted := &JobState{
+				ID:        id,
+				Type:      job.Type,
+				Payload:   job.Payload,
+				UniqueKey: job.UUID,
+				Timeout:   strconv.Itoa(job.Timeout) + "s",
+				Queue:     job.Queue,
+				Priority:  job.Priority,
+				MaxRetry:  job.MaxRetry,
+				Retried:   job.Retried,
+				// LogMessages []string
+				LastError: job.LastError,
+				// RunBy:     "abc",
+				Status: StatusFailAndRequeueing,
+			}
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			now := time.Now()
+			assetTime(t, "RunAt", state.RunAt, runAt)
+			assetTime(t, "Deadline", state.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", state.CreatedAt, now)
+			assetTime(t, "LastAt", state.LastAt, now)
+			assetTime(t, "LockedAt", state.LockedAt, now)
+
+			t.Log("测试一下 GetStates")
+			states, err := backend.GetStates(ctx, nil, 0, 0)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			state = &states[0]
+
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			assetTime(t, "RunAt", state.RunAt, runAt)
+			assetTime(t, "Deadline", state.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", state.CreatedAt, now)
+			assetTime(t, "LastAt", state.LastAt, now)
+			assetTime(t, "LockedAt", state.LockedAt, now)
+		})
+
+		t.Run("check state when complete with ok", func(t *testing.T) {
+			backend.ClearAll(ctx)
+			id, e := backend.Enqueue(ctx, job)
+			if nil != e {
+				t.Error(e)
+				return
+			}
+
+			e = backend.Destroy(ctx, id)
+			if e != nil {
+				t.Error(e)
+				return
+			}
+
+			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
+			job.LockedBy = "abc"
+			job.LastError = ""
+			job.Retried = 0
+			job.FailedAt = time.Time{}
+
+			state, err := backend.GetState(ctx, id)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			opts := []cmp.Option{
+				cmpopts.IgnoreFields(JobState{}, "ID", "LockedAt", "RunAt", "Deadline", "CreatedAt", "LastAt", "CompletedAt"),
+				cmp.Comparer(func(a, b Payload) bool {
+					return a.String() == b.String()
+				}),
+			}
+
+			excepted := &JobState{
+				ID:        id,
+				Type:      job.Type,
+				Payload:   job.Payload,
+				UniqueKey: job.UUID,
+				Timeout:   "0s",
+				Queue:     job.Queue,
+				Priority:  job.Priority,
+				MaxRetry:  0,
+				Retried:   0,
+				// LogMessages []string
+				LastError: job.LastError,
+				// RunBy:     "abc",
+				Status: StatusOK,
+			}
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			now := time.Now()
+			assetTime(t, "RunAt", state.RunAt, now)
+			assetTime(t, "Deadline", state.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", state.CreatedAt, now)
+			assetTime(t, "LastAt", state.LastAt, now)
+			assetTime(t, "LockedAt", state.LockedAt, now)
+
+			t.Log("测试一下 GetStates")
+			states, err := backend.GetStates(ctx, nil, 0, 0)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			state = &states[0]
+
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			assetTime(t, "RunAt", state.RunAt, now)
+			assetTime(t, "Deadline", state.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", state.CreatedAt, now)
+			assetTime(t, "LastAt", state.LastAt, now)
+			assetTime(t, "LockedAt", state.LockedAt, now)
+			assetTime(t, "CompletedAt", state.CompletedAt, now)
+		})
+
+		t.Run("check state when complete with error", func(t *testing.T) {
+			backend.ClearAll(ctx)
+			id, e := backend.Enqueue(ctx, job)
+			if nil != e {
+				t.Error(e)
+				return
+			}
+
+			e = backend.Fail(ctx, id, "errrr")
+			if e != nil {
+				t.Error(e)
+				return
+			}
+
+			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
+			job.LockedBy = "abc"
+			job.LastError = "errrr"
+			job.Retried = 0
+			job.FailedAt = time.Time{}
+
+			state, err := backend.GetState(ctx, id)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			opts := []cmp.Option{
+				cmpopts.IgnoreFields(JobState{}, "ID", "LockedAt", "RunAt", "Deadline", "CreatedAt", "LastAt", "CompletedAt"),
+				cmp.Comparer(func(a, b Payload) bool {
+					return a.String() == b.String()
+				}),
+			}
+
+			excepted := &JobState{
+				ID:        id,
+				Type:      job.Type,
+				Payload:   job.Payload,
+				UniqueKey: job.UUID,
+				Timeout:   "0s",
+				Queue:     job.Queue,
+				Priority:  job.Priority,
+				MaxRetry:  0,
+				Retried:   job.Retried,
+				// LogMessages []string
+				LastError: job.LastError,
+				// RunBy:     "abc",
+				Status: StatusFail,
+			}
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			now := time.Now()
+			assetTime(t, "RunAt", state.RunAt, now)
+			assetTime(t, "Deadline", state.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", state.CreatedAt, now)
+			assetTime(t, "LastAt", state.LastAt, now)
+			assetTime(t, "LockedAt", state.LockedAt, now)
+
+			t.Log("测试一下 GetStates")
+			states, err := backend.GetStates(ctx, nil, 0, 0)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			state = &states[0]
+
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			assetTime(t, "RunAt", state.RunAt, now)
+			assetTime(t, "Deadline", state.Deadline, job.Deadline)
+			assetTime(t, "CreatedAt", state.CreatedAt, now)
+			assetTime(t, "LastAt", state.LastAt, now)
+			assetTime(t, "LockedAt", state.LockedAt, now)
+			assetTime(t, "CompletedAt", state.CompletedAt, now)
 		})
 	})
 }
 
-func assetTime(t *testing.T, actual, excepted time.Time) {
+func assetTime(t *testing.T, field string, actual, excepted time.Time) {
 	t.Helper()
 
 	interval := actual.Sub(excepted)
@@ -319,12 +706,12 @@ func assetTime(t *testing.T, actual, excepted time.Time) {
 	}
 
 	if interval > time.Second {
-		t.Error("RunAt: want ", excepted, "got", actual)
+		t.Error(field+": want ", excepted, "got", actual, "interval is", interval)
 	}
 }
 
 func TestPriority(t *testing.T) {
-	backendTest(t, nil, func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB) {
+	backendTest(t, nil, nil, func(ctx context.Context, opts *DbOptions, wopts *WorkOptions, backend Backend, conn *sql.DB) {
 		job := &Job{
 			RunAt:     time.Now().Add(-1 * time.Second),
 			Deadline:  time.Now().Add(1 * time.Second),
@@ -375,7 +762,7 @@ func TestPriority(t *testing.T) {
 }
 
 func TestGetWithLocked(t *testing.T) {
-	backendTest(t, nil, func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB) {
+	backendTest(t, nil, nil, func(ctx context.Context, opts *DbOptions, wopts *WorkOptions, backend Backend, conn *sql.DB) {
 		job := &Job{
 			RunAt:     time.Now().Add(-1 * time.Second),
 			Deadline:  time.Now().Add(1 * time.Second),
@@ -421,7 +808,7 @@ func TestGetWithLocked(t *testing.T) {
 }
 
 func TestLockedJobInGet(t *testing.T) {
-	backendTest(t, nil, func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB) {
+	backendTest(t, nil, nil, func(ctx context.Context, opts *DbOptions, wopts *WorkOptions, backend Backend, conn *sql.DB) {
 		job := &Job{
 			RunAt:     time.Now().Add(-1 * time.Second),
 			Deadline:  time.Now().Add(1 * time.Second),
@@ -467,7 +854,7 @@ func TestLockedJobInGet(t *testing.T) {
 }
 
 func TestGetWithFailed(t *testing.T) {
-	backendTest(t, nil, func(ctx context.Context, opts *Options, backend Backend, conn *sql.DB) {
+	backendTest(t, nil, nil, func(ctx context.Context, opts *DbOptions, wopts *WorkOptions, backend Backend, conn *sql.DB) {
 		job := &Job{
 			RunAt:     time.Now().Add(-1 * time.Second),
 			Deadline:  time.Now().Add(1 * time.Second),
