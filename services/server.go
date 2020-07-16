@@ -280,13 +280,13 @@ func notFound(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-func NewServer(dbopts *kinglink.DbOptions, opts *kinglink.WorkOptions) (*Server, error) {
+func NewServer(dbopts *kinglink.DbOptions, opts *kinglink.WorkOptions, interceptor InterceptorFunc) (*Server, error) {
 	backend, err := kinglink.NewBackend(dbopts, opts)
 	if err != nil {
 		return nil, err
 	}
 	return &Server{
 		backendProxy: jobBackendProxy{backend: backend},
-		clientProxy:  jobClientService{backend: backend},
+		clientProxy:  jobClientService{backend: backend, interceptor: interceptor},
 	}, nil
 }

@@ -54,7 +54,7 @@ func ServerTest(t *testing.T, dbopts *kinglink.DbOptions, wopts *kinglink.WorkOp
 		}
 		dbopts.Conn = conn
 	}
-	srv, err := klclient.NewServer(dbopts, wopts)
+	srv, err := klclient.NewServer(dbopts, wopts, nil)
 	if err != nil {
 		t.Error(err)
 		return

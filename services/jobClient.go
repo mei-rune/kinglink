@@ -12,9 +12,18 @@ var _ Client = &jobClientService{}
 
 type jobClientService struct {
 	backend kinglink.ServerBackend
+
+	interceptor InterceptorFunc
 }
 
 func (jobsrv *jobClientService) Create(ctx context.Context, typeName string, args map[string]interface{}, opts *Options) (string, error) {
+	if jobsrv.interceptor != nil {
+		var err error
+		typeName, args, err = jobsrv.interceptor(ctx, typeName, args, opts)
+		if err != nil {
+			return "", err
+		}
+	}
 	id, err := jobsrv.backend.Enqueue(ctx, &kinglink.Job{
 		// RunAt     time.Time
 		Deadline: opts.Deadline,
