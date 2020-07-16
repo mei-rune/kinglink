@@ -8,6 +8,28 @@ import (
 	"sync"
 )
 
+// A Handler processes jobs.
+//
+// Run should return nil if the processing of a job
+// is successful.
+//
+// If Run return a non-nil error or panics, the job
+// will be retried after delay.
+type Handler interface {
+	Run(context.Context, *Job) error
+}
+
+// The HandlerFunc type is an adapter to allow the use of
+// ordinary functions as a Handler. If f is a function
+// with the appropriate signature, HandlerFunc(f) is a
+// Handler that calls f.
+type HandlerFunc func(context.Context, *Job) error
+
+// Run calls fn(ctx, job)
+func (fn HandlerFunc) Run(ctx context.Context, job *Job) error {
+	return fn(ctx, job)
+}
+
 // ServeMux is a multiplexer for asynchronous jobs.
 // It matches the type of each job against a list of registered patterns
 // and calls the handler for the pattern that most closely matches the

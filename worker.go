@@ -2,7 +2,6 @@ package kinglink
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -19,6 +18,8 @@ import (
 var (
 	ErrJobsEmpty   = errors.New("jobs is empty")
 	ErrJobNotFound = errors.New("job isnot found")
+
+	ErrNoContent = "no content"
 )
 
 type ErrAgain struct {
@@ -57,14 +58,6 @@ type WorkOptions struct {
 	MaxRunTime  time.Duration
 	SleepDelay  time.Duration
 	Queues      []string
-	ReadAhead   int
-
-	// By default failed jobs are destroyed after too many attempts. If you want to keep them around
-	// (perhaps to inspect the reason for the failure), set this to false.
-	DestroyFailedJobs bool
-	ExitOnComplete    bool
-
-	Conn *sql.DB `json:"-"`
 }
 
 const defaultMaxRunTime = 15 * time.Minute
@@ -95,7 +88,7 @@ func NewWorker(options *WorkOptions, mux *ServeMux, backend WorkBackend) (*Worke
 	return w, nil
 }
 
-func (w *Worker) Run(ctx context.Context, exitOnComplete bool, shutdown chan struct{}) {
+func (w *Worker) Run(ctx context.Context, exitOnComplete bool) {
 	logger := log.For(ctx).Named("kinglink").With(log.String("worker", w.name))
 
 	logger.Info("Starting job worker")
@@ -126,7 +119,7 @@ func (w *Worker) Run(ctx context.Context, exitOnComplete bool, shutdown chan str
 		}
 
 		select {
-		case <-shutdown:
+		case <-ctx.Done():
 			isRunning = false
 		case <-time.After(w.options.SleepDelay):
 		}
@@ -163,6 +156,9 @@ func (w *Worker) workOff(ctx context.Context, logger log.Logger, num int) (int, 
 func (w *Worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger) (bool, error) {
 	job, e := w.backend.Fetch(ctx, w.name, w.options.Queues)
 	if nil != e {
+		if e.Error() == ErrNoContent {
+			return false, ErrJobsEmpty
+		}
 		return false, e
 	}
 
@@ -248,14 +244,10 @@ func (w *Worker) invokeJob(ctx context.Context, job *Job) (err error) {
 }
 
 func (w *Worker) completeIt(ctx context.Context, logger log.Logger, job *Job) error {
-	return w.backend.Destroy(ctx, job.ID)
+	return w.backend.Success(ctx, job.ID)
 }
 
 func (w *Worker) failed(ctx context.Context, logger log.Logger, job *Job, e error) error {
-	if w.options.DestroyFailedJobs {
-		logger.Info("REMOVED permanently", log.Int("retried", job.Retried), log.Int("maxRetry", job.MaxRetry), log.Error(e))
-		return w.backend.Destroy(ctx, job.ID)
-	}
 	logger.Info("STOPPED permanently", log.Int("retried", job.Retried), log.Int("maxRetry", job.MaxRetry), log.Error(e))
 	return w.backend.Fail(ctx, job.ID, e.Error())
 }

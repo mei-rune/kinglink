@@ -1,32 +1,30 @@
-package tasks
+package services
 
 import (
 	"context"
 	"fmt"
-	"sync"
-	"time"
 
 	"github.com/runner-mei/errors"
-	"github.com/runner-mei/goutils/tid"
+	"github.com/runner-mei/kinglink"
 )
 
-var testCount = 0
+var _ Client = &jobClientService{}
 
 type jobClientService struct {
 	backend kinglink.ServerBackend
 }
 
 func (jobsrv *jobClientService) Create(ctx context.Context, typeName string, args map[string]interface{}, opts *Options) (string, error) {
-	id, err := jobSrv.backend.Enqueue(ctx, &kinglink.Job{
+	id, err := jobsrv.backend.Enqueue(ctx, &kinglink.Job{
 		// RunAt     time.Time
 		Deadline: opts.Deadline,
-		Timeout: opts.Timeout,
+		Timeout:  int(opts.Timeout.Seconds()),
 		// Priority: opts.Priority,
 		MaxRetry: opts.MaxRetry,
-		Queue: opts.Queue,
-		Type: typeName,
+		Queue:    opts.Queue,
+		Type:     typeName,
 		Payload:  kinglink.MakePayload(nil, args),
-		UUID: opts.Uuid,
+		UUID:     opts.Uuid,
 	})
 	if err != nil {
 		return "", err
@@ -60,7 +58,7 @@ func (jobsrv *jobClientService) Get(ctx context.Context, id string) (*TaskMessag
 	return jobsrv.backend.GetState(ctx, id)
 }
 
-func (jobsrv *jobClientService) Cancel(ctx context.Context, id string) error {
+func (jobsrv *jobClientService) Delete(ctx context.Context, id string) error {
 	return jobsrv.backend.Cancel(ctx, id)
 }
 

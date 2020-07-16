@@ -3,7 +3,6 @@ package kinglink
 import (
 	"context"
 	"database/sql"
-	"flag"
 	"fmt"
 	stdlog "log"
 	"os"
@@ -14,24 +13,25 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/runner-mei/kinglink/tests/common"
 	"github.com/runner-mei/log"
 )
 
 var (
-	db_url = flag.String("db_url", "host=127.0.0.1 dbname=delayed_test user=delayedtest password=123456 sslmode=disable", "the db url")
-	db_drv = flag.String("db_drv", "postgres", "the db driver")
+	DBUrl = common.DBUrl
+	DBDrv = common.DBDrv
 )
 
-func makeOpts() *DbOptions {
+func MakeOpts() *DbOptions {
 	return &DbOptions{
-		DbDrv: *db_drv,
-		DbURL: *db_url,
+		DbDrv: *DBDrv,
+		DbURL: *DBUrl,
 	}
 }
 
 func backendTest(t *testing.T, opts *DbOptions, wopts *WorkOptions, cb func(ctx context.Context, opts *DbOptions, wopts *WorkOptions, backend Backend, conn *sql.DB)) {
 	if opts == nil {
-		opts = makeOpts()
+		opts = MakeOpts()
 	}
 	if wopts == nil {
 		wopts = &WorkOptions{}

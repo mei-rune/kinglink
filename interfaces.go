@@ -1,3 +1,5 @@
+//go:generate gogen client -ext=.client-gen.go interfaces.go
+
 package kinglink
 
 import (
@@ -72,28 +74,6 @@ func NewJob(typeName string, args map[string]interface{}, options ...Option) *Jo
 		opt.apply(job)
 	}
 	return job
-}
-
-// A Handler processes jobs.
-//
-// Run should return nil if the processing of a job
-// is successful.
-//
-// If Run return a non-nil error or panics, the job
-// will be retried after delay.
-type Handler interface {
-	Run(context.Context, *Job) error
-}
-
-// The HandlerFunc type is an adapter to allow the use of
-// ordinary functions as a Handler. If f is a function
-// with the appropriate signature, HandlerFunc(f) is a
-// Handler that calls f.
-type HandlerFunc func(context.Context, *Job) error
-
-// Run calls fn(ctx, job)
-func (fn HandlerFunc) Run(ctx context.Context, job *Job) error {
-	return fn(ctx, job)
 }
 
 type TaskStatus int
@@ -211,10 +191,17 @@ type JobResult struct {
 }
 
 type WorkBackend interface {
+	// @http.GET(path="")
 	Fetch(ctx context.Context, name string, queues []string) (*Job, error)
-	Retry(ctx context.Context, id interface{}, attempts int, nextTime time.Time, payload *Payload, err string) error
-	Fail(ctx context.Context, id interface{}, e string) error
-	Destroy(ctx context.Context, id interface{}) error
+
+	// @http.PUT(path=":id/retry")
+	Retry(ctx context.Context, id interface{}, attempts int, nextTime time.Time, payload *Payload, errMessage string) error
+
+	// @http.PUT(path=":id/fail")
+	Fail(ctx context.Context, id interface{}, errMessage string) error
+
+	// @http.PUT(path=":id/success")
+	Success(ctx context.Context, id interface{}) error
 }
 
 type ServerBackend interface {

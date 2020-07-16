@@ -21,6 +21,8 @@ type DbOptions struct {
 	RunningTablename string
 	ResultTablename  string
 	ViewTablename    string
+
+	Conn *sql.DB
 }
 
 // A job object that is persisted to the database.
@@ -514,30 +516,34 @@ func (backend *dbBackend) Fail(ctx context.Context, id interface{}, err string) 
 		if e != nil {
 			return I18nError(backend.dbDrv, e)
 		}
-		return backend.Destroy(ctx, id)
+		return backend.copyResult(ctx, id, tx)
 	})
 }
 
-func (backend *dbBackend) Destroy(ctx context.Context, id interface{}) error {
+func (backend *dbBackend) Success(ctx context.Context, id interface{}) error {
 	return backend.withTx(ctx, func(ctx context.Context, tx DBRunner) error {
-		_, e := tx.ExecContext(ctx, backend.copySQLString, id)
-		if nil != e {
-			log.For(ctx).Info(backend.copySQLString, log.Stringer("args", log.SQLArgs{id}), log.Error(e))
-			if e == sql.ErrNoRows {
-				return nil
-			}
-			return I18nError(backend.dbDrv, e)
-		}
-		log.For(ctx).Info(backend.copySQLString, log.Stringer("args", log.SQLArgs{id}))
-
-		_, e = tx.ExecContext(ctx, backend.deleteSQLString, id)
-		if nil != e && sql.ErrNoRows != e {
-			log.For(ctx).Info(backend.deleteSQLString, log.Stringer("args", log.SQLArgs{id}), log.Error(e))
-			return I18nError(backend.dbDrv, e)
-		}
-		log.For(ctx).Info(backend.deleteSQLString, log.Stringer("args", log.SQLArgs{id}))
-		return nil
+		return backend.copyResult(ctx, id, tx)
 	})
+}
+
+func (backend *dbBackend) copyResult(ctx context.Context, id interface{}, tx DBRunner) error {
+	_, e := tx.ExecContext(ctx, backend.copySQLString, id)
+	if nil != e {
+		log.For(ctx).Info(backend.copySQLString, log.Stringer("args", log.SQLArgs{id}), log.Error(e))
+		if e == sql.ErrNoRows {
+			return nil
+		}
+		return I18nError(backend.dbDrv, e)
+	}
+	log.For(ctx).Info(backend.copySQLString, log.Stringer("args", log.SQLArgs{id}))
+
+	_, e = tx.ExecContext(ctx, backend.deleteSQLString, id)
+	if nil != e && sql.ErrNoRows != e {
+		log.For(ctx).Info(backend.deleteSQLString, log.Stringer("args", log.SQLArgs{id}), log.Error(e))
+		return I18nError(backend.dbDrv, e)
+	}
+	log.For(ctx).Info(backend.deleteSQLString, log.Stringer("args", log.SQLArgs{id}))
+	return nil
 }
 
 func (backend *dbBackend) Cancel(ctx context.Context, id interface{}) error {
@@ -778,7 +784,7 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 			resultTablename:      dbopts.ResultTablename,
 			viewTablename:        dbopts.ViewTablename,
 			isOwer:               false,
-			conn:                 opts.Conn,
+			conn:                 dbopts.Conn,
 			minPriority:          opts.MinPriority,
 			maxPriority:          opts.MaxPriority,
 			maxRunTime:           opts.MaxRunTime,
