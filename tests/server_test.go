@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -485,7 +486,7 @@ func TestErrNoContent(t *testing.T) {
 	}
 }
 
-func TestRunWorker(t *testing.T) {
+func TestWorkerWithRunOK(t *testing.T) {
 	mux := kinglink.NewServeMux()
 	mux.Handle("test", kinglink.HandlerFunc(func(ctx context.Context, job *kinglink.Job) error {
 		fields := job.Payload.MustFields()
@@ -496,6 +497,7 @@ func TestRunWorker(t *testing.T) {
 		}
 		return nil
 	}))
+
 	ServerTest(t, nil, nil, func(srv *TServer) {
 		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
 		if err != nil {
@@ -503,11 +505,14 @@ func TestRunWorker(t *testing.T) {
 			return
 		}
 
-		err = srv.RemoteBackend.Fail(srv.Ctx, id, "errmsg")
+		srv.Wopts.NamePrefix = "mywork:"
+		w, err := kinglink.NewWorker(srv.Wopts, mux, srv.RemoteBackend)
 		if err != nil {
 			t.Error(err)
 			return
 		}
+
+		w.Run(srv.Ctx, true)
 
 		t.Run("client.get", func(t *testing.T) {
 			state, err := srv.RemoteClient.Get(srv.Ctx, id)
@@ -527,13 +532,13 @@ func TestRunWorker(t *testing.T) {
 				UniqueKey:   "",
 				Retried:     0,
 				LogMessages: nil,
-				LastError:   "errmsg",
-				Status:      klclient.StatusFail,
+				LastError:   "",
+				Status:      klclient.StatusOK,
 				RunBy:       "",
 			}
 
 			opts := []cmp.Option{
-				cmpopts.IgnoreFields(kinglink.JobState{}, "ID", "CreatedAt", "LastAt", "RunAt", "CompletedAt"),
+				cmpopts.IgnoreFields(kinglink.JobState{}, "ID", "CreatedAt", "LastAt", "RunBy", "RunAt", "CompletedAt"),
 				cmp.Comparer(func(a, b kinglink.Payload) bool {
 					return a.String() == b.String()
 				}),
@@ -548,6 +553,92 @@ func TestRunWorker(t *testing.T) {
 			if id != fmt.Sprint(state.ID) {
 				t.Error("want ", id, "got", fmt.Sprint(state.ID))
 				return
+			}
+			if !strings.HasPrefix(state.RunBy, "mywork:") {
+				t.Error("want startwith 'mywork:' got", state.RunBy)
+			}
+		})
+
+		t.Run("backend.fetch", func(t *testing.T) {
+			job, err := srv.RemoteBackend.Fetch(srv.Ctx, "", nil)
+
+			if err != nil && !errors.IsNoContent(err) {
+				t.Error(err)
+				return
+			}
+
+			if err == nil && job != nil {
+				t.Error("want null got", fmt.Sprintf("%#v", job))
+				return
+			}
+		})
+	})
+}
+
+func TestWorkerWithRunFail(t *testing.T) {
+	mux := kinglink.NewServeMux()
+	mux.Handle("test", kinglink.HandlerFunc(func(ctx context.Context, job *kinglink.Job) error {
+		return errors.New("myerror")
+	}))
+
+	ServerTest(t, nil, nil, func(srv *TServer) {
+		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		srv.Wopts.NamePrefix = "mywork:"
+		w, err := kinglink.NewWorker(srv.Wopts, mux, srv.RemoteBackend)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		w.Run(srv.Ctx, true)
+
+		t.Run("client.get", func(t *testing.T) {
+			state, err := srv.RemoteClient.Get(srv.Ctx, id)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			excepted := &kinglink.JobState{
+				Type:        "test",
+				Payload:     kinglink.MakePayload(nil, map[string]interface{}{"a": "b"}),
+				ID:          id,
+				Queue:       "",
+				Priority:    0,
+				MaxRetry:    0,
+				Timeout:     "0s",
+				UniqueKey:   "",
+				Retried:     0,
+				LogMessages: nil,
+				LastError:   "myerror",
+				Status:      klclient.StatusFail,
+				RunBy:       "",
+			}
+
+			opts := []cmp.Option{
+				cmpopts.IgnoreFields(kinglink.JobState{}, "ID", "CreatedAt", "LastAt", "RunBy", "RunAt", "CompletedAt"),
+				cmp.Comparer(func(a, b kinglink.Payload) bool {
+					return a.String() == b.String()
+				}),
+			}
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			AssetTime(t, "CompletedAt", excepted.CompletedAt, time.Now())
+
+			if id != fmt.Sprint(state.ID) {
+				t.Error("want ", id, "got", fmt.Sprint(state.ID))
+				return
+			}
+			if !strings.HasPrefix(state.RunBy, "mywork:") {
+				t.Error("want startwith 'mywork:' got", state.RunBy)
 			}
 		})
 

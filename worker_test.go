@@ -38,6 +38,17 @@ func TestWork(t *testing.T) {
 	})
 }
 
+func TestWorkWithCancel(t *testing.T) {
+	workTest(t, nil, nil, nil, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		w.Run(ctx, false)
+		w.Run(ctx, true)
+	})
+}
+
 func TestRunJob(t *testing.T) {
 	c := make(chan string, 1)
 	mux := NewServeMux()

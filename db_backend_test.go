@@ -541,7 +541,7 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
-			e = backend.Destroy(ctx, id)
+			e = backend.Success(ctx, id)
 			if e != nil {
 				t.Error(e)
 				return
