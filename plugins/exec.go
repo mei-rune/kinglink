@@ -54,3 +54,7 @@ func Exec(ctx context.Context, job *kinglink.Job) error {
 	log.For(ctx).Debug("执行外部程序成功", log.ByteString("output", bs))
 	return nil
 }
+
+func init() {
+	kinglink.DefaultServeMux.Handle("exec", kinglink.HandlerFunc(Exec))
+}

@@ -16,7 +16,7 @@ import (
 )
 
 func TestCreateAndGet(t *testing.T) {
-	ServerTest(t, nil, nil, func(srv *TServer) {
+	ServerTest(t, nil, nil, nil, func(srv *TServer) {
 		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
 		if err != nil {
 			t.Error(err)
@@ -118,7 +118,7 @@ func TestCreateAndGet(t *testing.T) {
 }
 
 func TestFetch(t *testing.T) {
-	ServerTest(t, nil, nil, func(srv *TServer) {
+	ServerTest(t, nil, nil, nil, func(srv *TServer) {
 		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
 		if err != nil {
 			t.Error(err)
@@ -220,7 +220,7 @@ func TestFetch(t *testing.T) {
 }
 
 func TestRetry(t *testing.T) {
-	ServerTest(t, nil, nil, func(srv *TServer) {
+	ServerTest(t, nil, nil, nil, func(srv *TServer) {
 		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
 		if err != nil {
 			t.Error(err)
@@ -334,7 +334,7 @@ func TestRetry(t *testing.T) {
 }
 
 func TestRunOK(t *testing.T) {
-	ServerTest(t, nil, nil, func(srv *TServer) {
+	ServerTest(t, nil, nil, nil, func(srv *TServer) {
 		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
 		if err != nil {
 			t.Error(err)
@@ -408,7 +408,7 @@ func TestRunOK(t *testing.T) {
 }
 
 func TestRunFail(t *testing.T) {
-	ServerTest(t, nil, nil, func(srv *TServer) {
+	ServerTest(t, nil, nil, nil, func(srv *TServer) {
 		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
 		if err != nil {
 			t.Error(err)
@@ -498,7 +498,7 @@ func TestWorkerWithRunOK(t *testing.T) {
 		return nil
 	}))
 
-	ServerTest(t, nil, nil, func(srv *TServer) {
+	ServerTest(t, nil, nil, nil, func(srv *TServer) {
 		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
 		if err != nil {
 			t.Error(err)
@@ -581,7 +581,7 @@ func TestWorkerWithRunFail(t *testing.T) {
 		return errors.New("myerror")
 	}))
 
-	ServerTest(t, nil, nil, func(srv *TServer) {
+	ServerTest(t, nil, nil, nil, func(srv *TServer) {
 		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
 		if err != nil {
 			t.Error(err)

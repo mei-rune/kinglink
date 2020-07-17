@@ -30,6 +30,8 @@ func (fn HandlerFunc) Run(ctx context.Context, job *Job) error {
 	return fn(ctx, job)
 }
 
+var DefaultServeMux = NewServeMux()
+
 // ServeMux is a multiplexer for asynchronous jobs.
 // It matches the type of each job against a list of registered patterns
 // and calls the handler for the pattern that most closely matches the

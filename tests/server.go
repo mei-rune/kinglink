@@ -38,7 +38,7 @@ type TServer struct {
 	RemoteBackend kinglink.WorkBackend
 }
 
-func ServerTest(t *testing.T, dbopts *kinglink.DbOptions, wopts *kinglink.WorkOptions, cb func(srv *TServer)) {
+func ServerTest(t testing.TB, dbopts *kinglink.DbOptions, wopts *kinglink.WorkOptions, interceptor klclient.InterceptorFunc, cb func(srv *TServer)) {
 	if dbopts == nil {
 		dbopts = MakeOpts()
 	}
@@ -54,7 +54,7 @@ func ServerTest(t *testing.T, dbopts *kinglink.DbOptions, wopts *kinglink.WorkOp
 		}
 		dbopts.Conn = conn
 	}
-	srv, err := klclient.NewServer(dbopts, wopts, nil)
+	srv, err := klclient.NewServer(dbopts, wopts, interceptor)
 	if err != nil {
 		t.Error(err)
 		return
