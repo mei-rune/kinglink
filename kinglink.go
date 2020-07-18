@@ -177,6 +177,18 @@ func NewRemoteWorkBackend(urlstr string) (WorkBackend, error) {
 	}, nil
 }
 
+func NewRemoteClientWithProxy(proxy *resty.Proxy) Client {
+	return &ClientClient{
+		Proxy: proxy,
+	}
+}
+
+func NewRemoteWorkBackendWithProxy(proxy *resty.Proxy) WorkBackend {
+	return &core.WorkBackendClient{
+		Proxy: proxy,
+	}
+}
+
 func NewLocalWorkBackend(dbopts *DbOptions, wopts *WorkOptions) (WorkBackend, error) {
 	return NewLocalBackend(dbopts, wopts)
 }
