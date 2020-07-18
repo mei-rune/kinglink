@@ -6,7 +6,15 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/runner-mei/log"
 )
+
+type Context struct {
+	context.Context
+
+	Logger log.Logger
+}
 
 // A Handler processes jobs.
 //
@@ -16,17 +24,17 @@ import (
 // If Run return a non-nil error or panics, the job
 // will be retried after delay.
 type Handler interface {
-	Run(context.Context, *Job) error
+	Run(*Context, *Job) error
 }
 
 // The HandlerFunc type is an adapter to allow the use of
 // ordinary functions as a Handler. If f is a function
 // with the appropriate signature, HandlerFunc(f) is a
 // Handler that calls f.
-type HandlerFunc func(context.Context, *Job) error
+type HandlerFunc func(*Context, *Job) error
 
 // Run calls fn(ctx, job)
-func (fn HandlerFunc) Run(ctx context.Context, job *Job) error {
+func (fn HandlerFunc) Run(ctx *Context, job *Job) error {
 	return fn(ctx, job)
 }
 
@@ -66,7 +74,7 @@ func NewServeMux() *ServeMux {
 
 // RunJob dispatches the job to the handler whose
 // pattern most closely matches the job type.
-func (mux *ServeMux) RunJob(ctx context.Context, job *Job) error {
+func (mux *ServeMux) RunJob(ctx *Context, job *Job) error {
 	h, _ := mux.Handler(job)
 	return h.Run(ctx, job)
 }
@@ -151,7 +159,7 @@ func appendSorted(es []muxEntry, e muxEntry) []muxEntry {
 }
 
 // HandleFunc registers the handler function for the given pattern.
-func (mux *ServeMux) HandleFunc(pattern string, handler func(context.Context, *Job) error) {
+func (mux *ServeMux) HandleFunc(pattern string, handler func(*Context, *Job) error) {
 	if handler == nil {
 		panic("asynq: nil handler")
 	}
@@ -169,7 +177,7 @@ func (mux *ServeMux) Use(mws ...MiddlewareFunc) {
 }
 
 // NotFound returns an error indicating that the handler was not found for the given job.
-func NotFound(ctx context.Context, job *Job) error {
+func NotFound(ctx *Context, job *Job) error {
 	return fmt.Errorf("handler not found for job %q", job.Type)
 }
 

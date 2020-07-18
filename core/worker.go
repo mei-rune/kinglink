@@ -176,7 +176,7 @@ func (w *Worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger) (bo
 func (w *Worker) run(ctx context.Context, logger log.Logger, job *Job) (bool, error) {
 	logger.Info("RUNNING")
 	now := time.Now()
-	e := w.invokeJob(ctx, job)
+	e := w.invokeJob(&Context{Context: ctx, Logger: logger}, job)
 	if nil != e {
 		if nextTime, need := toRunAgain(e); need {
 			logger.Info("COMPLETED and should again", log.Time("nextTime", nextTime))
@@ -196,7 +196,7 @@ func (w *Worker) run(ctx context.Context, logger log.Logger, job *Job) (bool, er
 	return true, e // did work
 }
 
-func (w *Worker) invokeJob(ctx context.Context, job *Job) (err error) {
+func (w *Worker) invokeJob(ctx *Context, job *Job) (err error) {
 	defer func() {
 		if e := recover(); nil != e {
 			msg := fmt.Sprintf("[panic]%v \r\n%s", e, debug.Stack())
@@ -210,7 +210,8 @@ func (w *Worker) invokeJob(ctx context.Context, job *Job) (err error) {
 	}
 
 	var cancel context.CancelFunc
-	ctx, cancel = context.WithTimeout(ctx, job.execTimeout(w.options.MaxRunTime))
+	ctx.Context, cancel = context.WithTimeout(ctx.Context, job.execTimeout(w.options.MaxRunTime))
+
 	e = w.mux.RunJob(ctx, job)
 	if e != context.DeadlineExceeded {
 		cancel()

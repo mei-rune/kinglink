@@ -1,7 +1,6 @@
-package tests
+package kltests
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -487,7 +486,7 @@ func TestErrNoContent(t *testing.T) {
 
 func TestWorkerWithRunOK(t *testing.T) {
 	mux := kinglink.NewServeMux()
-	mux.Handle("test", kinglink.HandlerFunc(func(ctx context.Context, job *kinglink.Job) error {
+	mux.Handle("test", kinglink.HandlerFunc(func(ctx *kinglink.Context, job *kinglink.Job) error {
 		fields := job.Payload.MustFields()
 		o := fields["a"]
 		s := fmt.Sprint(o)
@@ -576,7 +575,7 @@ func TestWorkerWithRunOK(t *testing.T) {
 
 func TestWorkerWithRunFail(t *testing.T) {
 	mux := kinglink.NewServeMux()
-	mux.Handle("test", kinglink.HandlerFunc(func(ctx context.Context, job *kinglink.Job) error {
+	mux.Handle("test", kinglink.HandlerFunc(func(ctx *kinglink.Context, job *kinglink.Job) error {
 		return errors.New("myerror")
 	}))
 

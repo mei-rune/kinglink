@@ -52,7 +52,7 @@ func TestWorkWithCancel(t *testing.T) {
 func TestRunJob(t *testing.T) {
 	c := make(chan string, 1)
 	mux := NewServeMux()
-	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+	mux.Handle("test", HandlerFunc(func(ctx *Context, job *Job) error {
 		fields, err := job.Payload.Fields()
 		if err != nil {
 			return err
@@ -113,7 +113,7 @@ func assertSQLCount(t *testing.T, conn *sql.DB, sqlstr string, excepted int) {
 
 func TestRunErrorAndNoRescheduleIt(t *testing.T) {
 	mux := NewServeMux()
-	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+	mux.Handle("test", HandlerFunc(func(ctx *Context, job *Job) error {
 		return errors.New("ok error")
 	}))
 	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
@@ -142,7 +142,7 @@ func TestRunErrorAndNoRescheduleIt(t *testing.T) {
 
 func TestRunPanicAndNoRescheduleIt(t *testing.T) {
 	mux := NewServeMux()
-	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+	mux.Handle("test", HandlerFunc(func(ctx *Context, job *Job) error {
 		panic(errors.New("[PANIC]"))
 		return errors.New("ok error")
 	}))
@@ -172,7 +172,7 @@ func TestRunPanicAndNoRescheduleIt(t *testing.T) {
 
 func TestRunMaxLenErrorAndNoRescheduleIt(t *testing.T) {
 	mux := NewServeMux()
-	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+	mux.Handle("test", HandlerFunc(func(ctx *Context, job *Job) error {
 		return errors.New(strings.Repeat("aaa", 2000))
 	}))
 	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
@@ -201,7 +201,7 @@ func TestRunMaxLenErrorAndNoRescheduleIt(t *testing.T) {
 
 func TestRunErrorAndRescheduleIt(t *testing.T) {
 	mux := NewServeMux()
-	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+	mux.Handle("test", HandlerFunc(func(ctx *Context, job *Job) error {
 		return errors.New("ok error")
 	}))
 	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
@@ -230,7 +230,7 @@ func TestRunErrorAndRescheduleIt(t *testing.T) {
 
 func TestRunMaxLenErrorAndRescheduleIt(t *testing.T) {
 	mux := NewServeMux()
-	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+	mux.Handle("test", HandlerFunc(func(ctx *Context, job *Job) error {
 		return errors.New(strings.Repeat("aaa", 2000))
 	}))
 	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
@@ -259,7 +259,7 @@ func TestRunMaxLenErrorAndRescheduleIt(t *testing.T) {
 
 func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 	mux := NewServeMux()
-	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+	mux.Handle("test", HandlerFunc(func(ctx *Context, job *Job) error {
 		return errors.New("ok error")
 	}))
 	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
@@ -314,7 +314,7 @@ func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 func TestRunAgain(t *testing.T) {
 	count := 2
 	mux := NewServeMux()
-	mux.Handle("test", HandlerFunc(func(ctx context.Context, job *Job) error {
+	mux.Handle("test", HandlerFunc(func(ctx *Context, job *Job) error {
 		if count <= 0 {
 			return nil
 		}

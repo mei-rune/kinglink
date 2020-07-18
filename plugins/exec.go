@@ -1,7 +1,6 @@
 package plugins
 
 import (
-	"context"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -9,7 +8,7 @@ import (
 	"github.com/kardianos/osext"
 	"github.com/runner-mei/errors"
 	"github.com/runner-mei/goutils/as"
-	"github.com/runner-mei/kinglink"
+	"github.com/runner-mei/kinglink/core"
 	"github.com/runner-mei/log"
 )
 
@@ -17,7 +16,7 @@ var (
 	binDir, _ = osext.ExecutableFolder()
 )
 
-func Exec(ctx context.Context, job *kinglink.Job) error {
+func Exec(ctx *core.Context, job *core.Job) error {
 	fields, err := job.Payload.Fields()
 	if err != nil {
 		return errors.Wrap(err, "参数格式不正确")
@@ -56,5 +55,5 @@ func Exec(ctx context.Context, job *kinglink.Job) error {
 }
 
 func init() {
-	kinglink.DefaultServeMux.Handle("exec", kinglink.HandlerFunc(Exec))
+	core.DefaultServeMux.Handle("exec", core.HandlerFunc(Exec))
 }

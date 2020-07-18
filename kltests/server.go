@@ -1,4 +1,4 @@
-package tests
+package kltests
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/runner-mei/kinglink"
-	"github.com/runner-mei/kinglink/tests/common"
+	"github.com/runner-mei/kinglink/kltests/common"
 )
 
 var (

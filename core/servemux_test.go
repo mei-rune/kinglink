@@ -13,7 +13,7 @@ var invoked []string // list of middlewares in the order they were invoked.
 // makeFakeHandler returns a handler that updates the global called variable
 // to the given identity.
 func makeFakeHandler(identity string) Handler {
-	return HandlerFunc(func(ctx context.Context, t *Job) error {
+	return HandlerFunc(func(ctx *Context, t *Job) error {
 		called = identity
 		return nil
 	})
@@ -23,11 +23,15 @@ func makeFakeHandler(identity string) Handler {
 //to the global invoked slice.
 func makeFakeMiddleware(identity string) MiddlewareFunc {
 	return func(next Handler) Handler {
-		return HandlerFunc(func(ctx context.Context, t *Job) error {
+		return HandlerFunc(func(ctx *Context, t *Job) error {
 			invoked = append(invoked, identity)
 			return next.Run(ctx, t)
 		})
 	}
+}
+
+func newTestConext() *Context {
+	return &Context{Context: context.Background()}
 }
 
 // A list of pattern, handler pair that is registered with mux.
@@ -59,7 +63,7 @@ func TestServeMux(t *testing.T) {
 		called = "" // reset to zero value
 
 		task := NewJob(tc.typename, nil)
-		if err := mux.RunJob(context.Background(), task); err != nil {
+		if err := mux.RunJob(newTestConext(), task); err != nil {
 			t.Fatal(err)
 		}
 
@@ -118,7 +122,7 @@ func TestServeMuxNotFound(t *testing.T) {
 
 	for _, tc := range notFoundTests {
 		task := NewJob(tc.typename, nil)
-		err := mux.RunJob(context.Background(), task)
+		err := mux.RunJob(newTestConext(), task)
 		if err == nil {
 			t.Errorf("RunJob did not return error for task %q, should return 'not found' error", task.Type)
 		}
@@ -151,7 +155,7 @@ func TestServeMuxMiddlewares(t *testing.T) {
 		called = ""          // reset to zero value
 
 		task := NewJob(tc.typename, nil)
-		if err := mux.RunJob(context.Background(), task); err != nil {
+		if err := mux.RunJob(newTestConext(), task); err != nil {
 			t.Fatal(err)
 		}
 

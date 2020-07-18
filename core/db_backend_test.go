@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/runner-mei/kinglink/tests/common"
+	"github.com/runner-mei/kinglink/kltests/common"
 	"github.com/runner-mei/log"
 )
 

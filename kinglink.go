@@ -9,6 +9,7 @@ import (
 
 	"github.com/runner-mei/errors"
 	"github.com/runner-mei/kinglink/core"
+	_ "github.com/runner-mei/kinglink/plugins"
 	"github.com/runner-mei/resty"
 )
 
@@ -23,6 +24,7 @@ type ServeMux = core.ServeMux
 type TaskStatus = core.TaskStatus
 type JobState = core.JobState
 type Job = core.Job
+type Context = core.Context
 type HandlerFunc = core.HandlerFunc
 type Handler = core.Handler
 
