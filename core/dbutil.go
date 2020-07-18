@@ -1,4 +1,4 @@
-package kinglink
+package core
 
 import (
 	"bytes"

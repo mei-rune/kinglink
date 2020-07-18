@@ -9,7 +9,6 @@ import (
 
 	"github.com/runner-mei/errors"
 	"github.com/runner-mei/kinglink"
-	klclient "github.com/runner-mei/kinglink/services"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -17,7 +16,7 @@ import (
 
 func TestCreateAndGet(t *testing.T) {
 	ServerTest(t, nil, nil, nil, func(srv *TServer) {
-		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
+		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &kinglink.Options{})
 		if err != nil {
 			t.Error(err)
 			return
@@ -42,7 +41,7 @@ func TestCreateAndGet(t *testing.T) {
 				Retried:     0,
 				LogMessages: nil,
 				LastError:   "",
-				Status:      klclient.StatusQueueing,
+				Status:      kinglink.StatusQueueing,
 				RunBy:       "",
 			}
 
@@ -109,7 +108,7 @@ func TestCreateAndGet(t *testing.T) {
 				return
 			}
 
-			if state.Status != klclient.StatusRunning {
+			if state.Status != kinglink.StatusRunning {
 				t.Error("want running got", state.Status.String())
 				return
 			}
@@ -119,7 +118,7 @@ func TestCreateAndGet(t *testing.T) {
 
 func TestFetch(t *testing.T) {
 	ServerTest(t, nil, nil, nil, func(srv *TServer) {
-		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
+		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &kinglink.Options{})
 		if err != nil {
 			t.Error(err)
 			return
@@ -170,7 +169,7 @@ func TestFetch(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			if state.Status != klclient.StatusRunning {
+			if state.Status != kinglink.StatusRunning {
 				t.Error("want fail_and_requeueing got", state.Status.String())
 				return
 			}
@@ -195,7 +194,7 @@ func TestFetch(t *testing.T) {
 				Retried:     0,
 				LogMessages: nil,
 				LastError:   "",
-				Status:      klclient.StatusRunning,
+				Status:      kinglink.StatusRunning,
 				RunBy:       "mywork",
 			}
 
@@ -221,7 +220,7 @@ func TestFetch(t *testing.T) {
 
 func TestRetry(t *testing.T) {
 	ServerTest(t, nil, nil, nil, func(srv *TServer) {
-		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
+		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &kinglink.Options{})
 		if err != nil {
 			t.Error(err)
 			return
@@ -241,7 +240,7 @@ func TestRetry(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			if state.Status != klclient.StatusFailAndRequeueing {
+			if state.Status != kinglink.StatusFailAndRequeueing {
 				t.Error("want fail_and_requeueing got", state.Status.String())
 				return
 			}
@@ -266,7 +265,7 @@ func TestRetry(t *testing.T) {
 				Retried:     2,
 				LogMessages: nil,
 				LastError:   "abcerr",
-				Status:      klclient.StatusFailAndRequeueing,
+				Status:      kinglink.StatusFailAndRequeueing,
 				RunBy:       "",
 			}
 
@@ -335,7 +334,7 @@ func TestRetry(t *testing.T) {
 
 func TestRunOK(t *testing.T) {
 	ServerTest(t, nil, nil, nil, func(srv *TServer) {
-		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
+		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &kinglink.Options{})
 		if err != nil {
 			t.Error(err)
 			return
@@ -367,7 +366,7 @@ func TestRunOK(t *testing.T) {
 				Retried:     0,
 				LogMessages: nil,
 				LastError:   "",
-				Status:      klclient.StatusOK,
+				Status:      kinglink.StatusOK,
 				RunBy:       "",
 			}
 
@@ -409,7 +408,7 @@ func TestRunOK(t *testing.T) {
 
 func TestRunFail(t *testing.T) {
 	ServerTest(t, nil, nil, nil, func(srv *TServer) {
-		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
+		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &kinglink.Options{})
 		if err != nil {
 			t.Error(err)
 			return
@@ -440,7 +439,7 @@ func TestRunFail(t *testing.T) {
 				Retried:     0,
 				LogMessages: nil,
 				LastError:   "errmsg",
-				Status:      klclient.StatusFail,
+				Status:      kinglink.StatusFail,
 				RunBy:       "",
 			}
 
@@ -499,7 +498,7 @@ func TestWorkerWithRunOK(t *testing.T) {
 	}))
 
 	ServerTest(t, nil, nil, nil, func(srv *TServer) {
-		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
+		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &kinglink.Options{})
 		if err != nil {
 			t.Error(err)
 			return
@@ -533,7 +532,7 @@ func TestWorkerWithRunOK(t *testing.T) {
 				Retried:     0,
 				LogMessages: nil,
 				LastError:   "",
-				Status:      klclient.StatusOK,
+				Status:      kinglink.StatusOK,
 				RunBy:       "",
 			}
 
@@ -582,7 +581,7 @@ func TestWorkerWithRunFail(t *testing.T) {
 	}))
 
 	ServerTest(t, nil, nil, nil, func(srv *TServer) {
-		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &klclient.Options{})
+		id, err := srv.RemoteClient.Create(srv.Ctx, "test", map[string]interface{}{"a": "b"}, &kinglink.Options{})
 		if err != nil {
 			t.Error(err)
 			return
@@ -616,7 +615,7 @@ func TestWorkerWithRunFail(t *testing.T) {
 				Retried:     0,
 				LogMessages: nil,
 				LastError:   "myerror",
-				Status:      klclient.StatusFail,
+				Status:      kinglink.StatusFail,
 				RunBy:       "",
 			}
 

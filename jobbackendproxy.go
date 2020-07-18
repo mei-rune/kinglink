@@ -1,21 +1,21 @@
-package services
+package kinglink
 
 import (
 	"context"
 	"time"
 
-	"github.com/runner-mei/kinglink"
+	"github.com/runner-mei/kinglink/core"
 )
 
 type jobBackendProxy struct {
-	backend kinglink.WorkBackend
+	backend core.WorkBackend
 }
 
-func (broker *jobBackendProxy) Fetch(ctx context.Context, name string, queues []string) (*kinglink.Job, error) {
+func (broker *jobBackendProxy) Fetch(ctx context.Context, name string, queues []string) (*core.Job, error) {
 	return broker.backend.Fetch(ctx, name, queues)
 }
 
-func (broker *jobBackendProxy) Retry(ctx context.Context, id interface{}, attempts int, nextTime time.Time, payload *kinglink.Payload, err string) error {
+func (broker *jobBackendProxy) Retry(ctx context.Context, id interface{}, attempts int, nextTime time.Time, payload *core.Payload, err string) error {
 	return broker.backend.Retry(ctx, id, attempts, nextTime, payload, err)
 }
 

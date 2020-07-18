@@ -1,17 +1,17 @@
-package services
+package kinglink
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/runner-mei/errors"
-	"github.com/runner-mei/kinglink"
+	"github.com/runner-mei/kinglink/core"
 )
 
 var _ Client = &jobClientService{}
 
 type jobClientService struct {
-	backend kinglink.ServerBackend
+	backend core.ServerBackend
 
 	interceptor InterceptorFunc
 }
@@ -24,7 +24,7 @@ func (jobsrv *jobClientService) Create(ctx context.Context, typeName string, arg
 			return "", err
 		}
 	}
-	id, err := jobsrv.backend.Enqueue(ctx, &kinglink.Job{
+	id, err := jobsrv.backend.Enqueue(ctx, &core.Job{
 		// RunAt     time.Time
 		Deadline: opts.Deadline,
 		Timeout:  int(opts.Timeout.Seconds()),
@@ -32,7 +32,7 @@ func (jobsrv *jobClientService) Create(ctx context.Context, typeName string, arg
 		MaxRetry: opts.MaxRetry,
 		Queue:    opts.Queue,
 		Type:     typeName,
-		Payload:  kinglink.MakePayload(nil, args),
+		Payload:  core.MakePayload(nil, args),
 		UUID:     opts.Uuid,
 	})
 	if err != nil {

@@ -1,5 +1,5 @@
 // Please don't edit this file!
-package kinglink
+package core
 
 import (
 	"context"

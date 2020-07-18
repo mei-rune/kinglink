@@ -10,9 +10,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/runner-mei/kinglink"
-	klclient "github.com/runner-mei/kinglink/services"
 	"github.com/runner-mei/kinglink/tests/common"
-	"github.com/runner-mei/resty"
 )
 
 var (
@@ -32,13 +30,13 @@ type TServer struct {
 	Conn          *sql.DB
 	DbOpts        *kinglink.DbOptions
 	Wopts         *kinglink.WorkOptions
-	Srv           *klclient.Server
+	Srv           *kinglink.Server
 	Hsrv          *httptest.Server
-	RemoteClient  klclient.Client
+	RemoteClient  kinglink.Client
 	RemoteBackend kinglink.WorkBackend
 }
 
-func ServerTest(t testing.TB, dbopts *kinglink.DbOptions, wopts *kinglink.WorkOptions, interceptor klclient.InterceptorFunc, cb func(srv *TServer)) {
+func ServerTest(t testing.TB, dbopts *kinglink.DbOptions, wopts *kinglink.WorkOptions, interceptor kinglink.InterceptorFunc, cb func(srv *TServer)) {
 	if dbopts == nil {
 		dbopts = MakeOpts()
 	}
@@ -54,7 +52,7 @@ func ServerTest(t testing.TB, dbopts *kinglink.DbOptions, wopts *kinglink.WorkOp
 		}
 		dbopts.Conn = conn
 	}
-	srv, err := klclient.NewServer(dbopts, wopts, interceptor)
+	srv, err := kinglink.NewServer(dbopts, wopts, interceptor)
 	if err != nil {
 		t.Error(err)
 		return
@@ -73,11 +71,15 @@ func ServerTest(t testing.TB, dbopts *kinglink.DbOptions, wopts *kinglink.WorkOp
 		Conn:   dbopts.Conn,
 	}
 
-	tsrv.RemoteClient = &klclient.ClientClient{
-		Proxy: resty.Must(resty.New(hsrv.URL + "/tasks")),
+	tsrv.RemoteClient, err = kinglink.NewRemoteClient(hsrv.URL + "/tasks")
+	if err != nil {
+		t.Error(err)
+		return
 	}
-	tsrv.RemoteBackend = &kinglink.WorkBackendClient{
-		Proxy: resty.Must(resty.New(hsrv.URL + "/backend")),
+	tsrv.RemoteBackend, err = kinglink.NewRemoteWorkBackend(hsrv.URL + "/backend")
+	if err != nil {
+		t.Error(err)
+		return
 	}
 
 	for _, tablename := range []string{

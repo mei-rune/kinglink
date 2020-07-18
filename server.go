@@ -1,4 +1,4 @@
-package services
+package kinglink
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/runner-mei/kinglink"
+	"github.com/runner-mei/kinglink/core"
 )
 
 type Server struct {
@@ -80,10 +80,10 @@ func (srv *Server) serveBackend(ctx context.Context, w http.ResponseWriter, r *h
 		switch ss[1] {
 		case "retry":
 			var bindArgs struct {
-				Attempts int              `json:"attempts,omitempty"`
-				NextTime time.Time        `json:"next_time,omitempty"`
-				Payload  kinglink.Payload `json:"payload,omitempty"`
-				Err      string           `json:"err_message,omitempty"`
+				Attempts int       `json:"attempts,omitempty"`
+				NextTime time.Time `json:"next_time,omitempty"`
+				Payload  Payload   `json:"payload,omitempty"`
+				Err      string    `json:"err_message,omitempty"`
 			}
 			if err := bind(r, &bindArgs); err != nil {
 				returnError(ctx, w, r, http.StatusBadRequest, "读参数失败： "+err.Error())
@@ -280,8 +280,8 @@ func notFound(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-func NewServer(dbopts *kinglink.DbOptions, opts *kinglink.WorkOptions, interceptor InterceptorFunc) (*Server, error) {
-	backend, err := kinglink.NewBackend(dbopts, opts)
+func NewServer(dbopts *DbOptions, opts *WorkOptions, interceptor InterceptorFunc) (*Server, error) {
+	backend, err := core.NewBackend(dbopts, opts)
 	if err != nil {
 		return nil, err
 	}

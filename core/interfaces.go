@@ -1,6 +1,6 @@
 //go:generate gogen client -ext=.client-gen.go interfaces.go
 
-package kinglink
+package core
 
 import (
 	"context"
