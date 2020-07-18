@@ -281,6 +281,9 @@ func notFound(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 }
 
 func NewServer(dbopts *DbOptions, opts *WorkOptions, interceptor InterceptorFunc) (*Server, error) {
+	if interceptor == nil {
+		interceptor = DefaultInterceptor()
+	}
 	backend, err := core.NewBackend(dbopts, opts)
 	if err != nil {
 		return nil, err
