@@ -95,9 +95,9 @@ func (w *Worker) Run(ctx context.Context, exitOnComplete bool) {
 
 	isRunning := true
 	for isRunning {
-		for isRunning {
-			now := time.Now()
+		now := time.Now()
 
+		for isRunning {
 			success, failure, e := w.workOff(ctx, logger, 10)
 			if e != nil {
 				w.lastError.Store(e.Error())
@@ -106,16 +106,22 @@ func (w *Worker) Run(ctx context.Context, exitOnComplete bool) {
 				break
 			}
 
-			if success == 0 && exitOnComplete {
-				isRunning = false
-			}
-
 			w.lastError.Store("")
 
 			logger.Info("run ok",
 				log.Int("success", success),
 				log.Int("failure", failure),
 				log.Duration("elapsed", time.Now().Sub(now)))
+
+			if success == 0 {
+				if exitOnComplete {
+					isRunning = false
+					break
+				}
+				if failure == 0 {
+					break
+				}
+			}
 		}
 
 		select {
