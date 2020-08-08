@@ -233,7 +233,8 @@ func (payload *Payload) Scan(value interface{}) error {
 		payload.values = nil
 		return nil
 	case []byte:
-		payload.bs = s
+		payload.bs = make([]byte, len(s))
+		copy(payload.bs, s)
 		payload.values = nil
 		return nil
 	}
