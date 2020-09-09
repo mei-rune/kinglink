@@ -42,7 +42,7 @@ func (jobsrv *jobClientService) Create(ctx context.Context, typeName string, arg
 }
 
 func (jobsrv *jobClientService) BatchCreate(ctx context.Context, requests []BatchRequest) ([]BatchResult, error) {
-	results := make([]BatchResult, len(requests))
+	results := make([]BatchResult, 0, len(requests))
 	for idx := range requests {
 		id, err := jobsrv.Create(ctx, requests[idx].Type, requests[idx].Args, requests[idx].Options)
 		if err != nil {
