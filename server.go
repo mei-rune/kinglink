@@ -37,7 +37,11 @@ func (srv *Server) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http
 }
 
 func (srv *Server) ServeBackend(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	ss := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	var ss []string
+	r.URL.Path = strings.Trim(r.URL.Path, "/")
+	if r.URL.Path != "" {
+		ss = strings.Split(r.URL.Path, "/")
+	}
 	srv.serveBackend(ctx, w, r, ss)
 }
 
