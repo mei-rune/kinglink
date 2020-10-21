@@ -668,7 +668,7 @@ func (backend *pgBackend) GetStates(ctx context.Context, queues []string, offset
 	var jobResults = make([]JobState, 16)
 	count := 0
 	for rows.Next() {
-		if len(jobResults) >= count {
+		if len(jobResults) <= count {
 			copyed := make([]JobState, 2*len(jobResults))
 			copy(copyed, jobResults)
 			jobResults = copyed
