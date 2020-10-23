@@ -49,6 +49,47 @@ func TestWorkWithCancel(t *testing.T) {
 	})
 }
 
+func TestRunMutiJob(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+
+	maxThreads := 1000
+	c := make(chan string, maxThreads)
+	mux := NewServeMux()
+	mux.Handle("test", HandlerFunc(func(ctx *Context, job *Job) error {
+		time.Sleep(1 * time.Second)
+		c <- "a"
+		return nil
+	}))
+	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
+		for i := 0; i < maxThreads; i++ {
+			_, e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
+			if nil != e {
+				t.Error(e)
+				return
+			}
+		}
+
+		var cancel func()
+		ctx, cancel = context.WithCancel(ctx)
+		go func() {
+			w.Run(ctx, maxThreads, false)
+		}()
+
+		now := time.Now()
+		for i := 0; i < maxThreads; i++ {
+			<-c
+		}
+		interval := time.Now().Sub(now)
+		cancel()
+
+		if interval > 60*time.Second {
+			t.Error("timeout! want 10s got ", interval)
+		}
+	})
+}
+
 func TestRunJob(t *testing.T) {
 	c := make(chan string, 1)
 	mux := NewServeMux()
