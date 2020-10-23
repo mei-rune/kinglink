@@ -311,6 +311,43 @@ func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 	})
 }
 
+func TestRunErrorAndFailAfterDefaultMaxRetry(t *testing.T) {
+	mux := NewServeMux()
+	mux.Handle("test", HandlerFunc(func(ctx *Context, job *Job) error {
+		return errors.New("ok error")
+	}))
+	woptions := &WorkOptions{MaxRetry: 3}
+	workTest(t, nil, woptions, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
+		_, e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(12))
+		if nil != e {
+			t.Error(e)
+			return
+		}
+
+		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
+
+		_, e = conn.Exec("update " + dbOpts.RunningTablename + " set Retried = " + fmt.Sprint(woptions.MaxRetry+1))
+		if e != nil {
+			t.Error(e)
+			return
+		}
+
+		success, failure, e := w.workOff(ctx, logger, 3)
+		if e != nil {
+			t.Error(e)
+		}
+		if success != 0 {
+			t.Error("want 0 got", success)
+		}
+		if failure != 1 {
+			t.Error("want 1 got", failure)
+		}
+
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+dbOpts.RunningTablename, 1)
+		assertSQLCount(t, conn, "SELECT COUNT(*) FROM "+dbOpts.ResultTablename, 0)
+	})
+}
+
 func TestRunAgain(t *testing.T) {
 	count := 2
 	mux := NewServeMux()

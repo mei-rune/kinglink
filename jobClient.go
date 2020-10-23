@@ -17,6 +17,9 @@ type jobClientService struct {
 }
 
 func (jobsrv *jobClientService) Create(ctx context.Context, typeName string, args map[string]interface{}, opts *Options) (string, error) {
+	if opts == nil {
+		opts = DefaultOptions()
+	}
 	if jobsrv.interceptor != nil {
 		var err error
 		typeName, args, err = jobsrv.interceptor(ctx, typeName, args, opts)

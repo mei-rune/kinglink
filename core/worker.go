@@ -173,7 +173,7 @@ func (w *Worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger) (bo
 	}
 
 	ctx = job.createCtx(ctx)
-	logger = log.For(ctx).With(log.Int64("id", job.ID),
+	logger = log.For(ctx, logger).With(log.Int64("id", job.ID),
 		log.String("uuid", job.UUID), log.String("type", job.Type))
 
 	return w.run(ctx, logger, job)
@@ -189,7 +189,7 @@ func (w *Worker) run(ctx context.Context, logger log.Logger, job *Job) (bool, er
 			e = w.reschedule(ctx, logger, true, job, nextTime, nil)
 			return true, e
 		} else if isDeserializationError(e) {
-			logger.Info("FAILED (deserialization)", log.Int("retried", job.Retried), log.Int("maxRetry", job.MaxRetry), log.Error(e))
+			logger.Info("FAILED (deserialization)", log.Int("retried", job.Retried), log.Int("maxRetry", job.getMaxRetry(w.options.MaxRetry)), log.Error(e))
 			e = w.failed(ctx, logger, job, e)
 		} else {
 			e = w.handleFailedJob(ctx, logger, job, e)
@@ -255,12 +255,12 @@ func (w *Worker) completeIt(ctx context.Context, logger log.Logger, job *Job) er
 }
 
 func (w *Worker) failed(ctx context.Context, logger log.Logger, job *Job, e error) error {
-	logger.Info("STOPPED permanently", log.Int("retried", job.Retried), log.Int("maxRetry", job.MaxRetry), log.Error(e))
+	logger.Info("STOPPED permanently", log.Int("retried", job.Retried), log.Int("maxRetry", job.getMaxRetry(w.options.MaxRetry)), log.Error(e))
 	return w.backend.Fail(ctx, job.ID, e.Error())
 }
 
 func (w *Worker) handleFailedJob(ctx context.Context, logger log.Logger, job *Job, e error) error {
-	logger.Info("FAILED", log.Int("retried", job.Retried), log.Int("maxRetry", job.MaxRetry), log.Error(e))
+	logger.Info("FAILED", log.Int("retried", job.Retried), log.Int("maxRetry", job.getMaxRetry(w.options.MaxRetry)), log.Error(e))
 	return w.reschedule(ctx, logger, false, job, time.Time{}, e)
 }
 

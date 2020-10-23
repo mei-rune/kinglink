@@ -65,6 +65,10 @@ type Options struct {
 	Uuid     string        `json:"uuid,omitempty"`
 }
 
+func DefaultOptions() *Options {
+	return &Options{}
+}
+
 type Option interface {
 	apply(*Options)
 }
