@@ -88,17 +88,31 @@ func NewWorker(options *WorkOptions, mux *ServeMux, backend WorkBackend) (*Worke
 	return w, nil
 }
 
-func (w *Worker) Run(ctx context.Context, exitOnComplete bool) {
+func (w *Worker) Run(ctx context.Context, threads int, exitOnComplete bool) {
 	logger := log.For(ctx).Named("kinglink").With(log.String("worker", w.name))
+
+	var pool WaitGroupThreads
+	var waited bool
+	pool.Init(threads, func(err error) {
+		w.lastError.Store(err.Error())
+
+		logger.Error("run error", log.Error(err))
+	})
+	defer func() {
+		if !waited {
+			pool.Wait()
+		}
+	}()
+	var stats stats
 
 	logger.Info("Starting job worker")
 
+	now := time.Now()
 	isRunning := true
 	for isRunning {
-		now := time.Now()
 
 		for isRunning {
-			success, failure, e := w.workOff(ctx, logger, 10)
+			n, e := w.workOff(ctx, logger, &pool, &stats, 10)
 			if e != nil {
 				w.lastError.Store(e.Error())
 
@@ -109,16 +123,11 @@ func (w *Worker) Run(ctx context.Context, exitOnComplete bool) {
 			w.lastError.Store("")
 
 			logger.Info("run ok",
-				log.Int("success", success),
-				log.Int("failure", failure),
-				log.Duration("elapsed", time.Now().Sub(now)))
+				log.Int("add", n))
 
-			if success == 0 {
+			if n == 0 {
 				if exitOnComplete {
 					isRunning = false
-					break
-				}
-				if failure == 0 {
 					break
 				}
 			}
@@ -130,53 +139,82 @@ func (w *Worker) Run(ctx context.Context, exitOnComplete bool) {
 		case <-time.After(w.options.SleepDelay):
 		}
 	}
+	waited = true
+	pool.Wait()
+
+	logger.Info("run ok",
+		log.Int("success", stats.Success()),
+		log.Int("failure", stats.Failure()),
+		log.Duration("elapsed", time.Now().Sub(now)))
 	logger.Info("No more jobs available. Exiting")
 }
 
 // Do num jobs and return stats on success/failure.
 // Exit early if interrupted.
-func (w *Worker) workOff(ctx context.Context, logger log.Logger, num int) (int, int, error) {
-	success, failure := 0, 0
+func (w *Worker) WorkOff(ctx context.Context, logger log.Logger, threads, num int) (int, int, error) {
+	var pool *ErrGroupThreads
+	pool, ctx = NewErrGroupThreads(ctx, threads)
+	var stats stats
 
-	for i := 0; i < num; i++ {
-		ok, e := w.reserveAndRunOneJob(ctx, logger)
-		if nil != e {
-			if e == ErrJobsEmpty {
-				return success, failure, nil
-			}
-			return success, failure, e
-		}
+	_, e := w.workOff(ctx, logger, pool, &stats, num)
 
-		if ok {
-			success += 1
-		} else {
-			failure += 1
+	if err := pool.Wait(); err != nil {
+		if e == nil {
+			e = err
 		}
 	}
 
-	return success, failure, nil
+	return stats.Success(), stats.Failure(), e
+}
+
+// Do num jobs and return stats on success/failure.
+// Exit early if interrupted.
+func (w *Worker) workOff(ctx context.Context, logger log.Logger, pool Threads, stats *stats, num int) (int, error) {
+	for i := 0; i < num; i++ {
+		e := w.reserveAndRunOneJob(ctx, logger, pool, stats)
+		if nil != e {
+			if e == ErrJobsEmpty {
+				return i, nil
+			}
+			return i, e
+		}
+	}
+
+	return num, nil
 }
 
 // Run the next job we can get an exclusive lock on.
 // If no jobs are left we return nil
-func (w *Worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger) (bool, error) {
+func (w *Worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger, pool Threads, stats *stats) error {
+	if e := pool.Acquire(ctx); e != nil {
+		return ErrJobsEmpty
+	}
 	job, e := w.backend.Fetch(ctx, w.name, w.options.Queues)
 	if nil != e {
 		if e.Error() == ErrNoContent {
-			return false, ErrJobsEmpty
+			return ErrJobsEmpty
 		}
-		return false, e
+		return e
 	}
 
 	if nil == job {
-		return false, ErrJobsEmpty
+		return ErrJobsEmpty
 	}
 
 	ctx = job.createCtx(ctx)
 	logger = log.For(ctx, logger).With(log.Int64("id", job.ID),
 		log.String("uuid", job.UUID), log.String("type", job.Type))
 
-	return w.run(ctx, logger, job)
+	pool.Go(func() error {
+		ok, e := w.run(ctx, logger, job)
+		if ok {
+			stats.addSuccess()
+		} else {
+			stats.addFailure()
+		}
+		return e
+	})
+	return nil
 }
 
 func (w *Worker) run(ctx context.Context, logger log.Logger, job *Job) (bool, error) {
