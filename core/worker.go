@@ -88,7 +88,7 @@ func NewWorker(options *WorkOptions, mux *ServeMux, backend WorkBackend) (*Worke
 	return w, nil
 }
 
-func (w *Worker) Run(ctx context.Context, exitOnComplete bool) {
+func (w *Worker) Run(ctx context.Context, threads int, exitOnComplete bool) {
 	logger := log.For(ctx).Named("kinglink").With(log.String("worker", w.name))
 
 	logger.Info("Starting job worker")
