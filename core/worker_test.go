@@ -31,7 +31,7 @@ func workTest(t *testing.T, o *DbOptions, w *WorkOptions, mux *ServeMux, cb func
 
 func TestWork(t *testing.T) {
 	workTest(t, nil, nil, nil, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
-		_, _, e := w.workOff(ctx, logger, 10)
+		_, _, e := w.WorkOff(ctx, logger, 1, 10)
 		if e != nil {
 			t.Error(e)
 		}
@@ -44,8 +44,49 @@ func TestWorkWithCancel(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		w.Run(ctx, false)
-		w.Run(ctx, true)
+		w.Run(ctx, 1, false)
+		w.Run(ctx, 1, true)
+	})
+}
+
+func TestRunMutiJob(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode")
+	}
+
+	maxThreads := 1000
+	c := make(chan string, maxThreads)
+	mux := NewServeMux()
+	mux.Handle("test", HandlerFunc(func(ctx *Context, job *Job) error {
+		time.Sleep(1 * time.Second)
+		c <- "a"
+		return nil
+	}))
+	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
+		for i := 0; i < maxThreads; i++ {
+			_, e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
+			if nil != e {
+				t.Error(e)
+				return
+			}
+		}
+
+		var cancel func()
+		ctx, cancel = context.WithCancel(ctx)
+		go func() {
+			w.Run(ctx, maxThreads, false)
+		}()
+
+		now := time.Now()
+		for i := 0; i < maxThreads; i++ {
+			<-c
+		}
+		interval := time.Now().Sub(now)
+		cancel()
+
+		if interval > 60*time.Second {
+			t.Error("timeout! want 10s got ", interval)
+		}
 	})
 }
 
@@ -73,7 +114,7 @@ func TestRunJob(t *testing.T) {
 			return
 		}
 
-		success, failure, e := w.workOff(ctx, logger, 1)
+		success, failure, e := w.WorkOff(ctx, logger, 1, 1)
 		if nil != e {
 			t.Error(e)
 		}
@@ -125,7 +166,7 @@ func TestRunErrorAndNoRescheduleIt(t *testing.T) {
 
 		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
 
-		success, failure, e := w.workOff(ctx, logger, 1)
+		success, failure, e := w.WorkOff(ctx, logger, 1, 1)
 		if e != nil {
 			t.Error(e)
 		}
@@ -155,7 +196,7 @@ func TestRunPanicAndNoRescheduleIt(t *testing.T) {
 
 		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
 
-		success, failure, e := w.workOff(ctx, logger, 1)
+		success, failure, e := w.WorkOff(ctx, logger, 1, 1)
 		if e != nil {
 			t.Error(e)
 		}
@@ -184,7 +225,7 @@ func TestRunMaxLenErrorAndNoRescheduleIt(t *testing.T) {
 
 		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
 
-		success, failure, e := w.workOff(ctx, logger, 1)
+		success, failure, e := w.WorkOff(ctx, logger, 1, 1)
 		if e != nil {
 			t.Error(e)
 		}
@@ -213,7 +254,7 @@ func TestRunErrorAndRescheduleIt(t *testing.T) {
 
 		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
 
-		success, failure, e := w.workOff(ctx, logger, 1)
+		success, failure, e := w.WorkOff(ctx, logger, 1, 1)
 		if e != nil {
 			t.Error(e)
 		}
@@ -242,7 +283,7 @@ func TestRunMaxLenErrorAndRescheduleIt(t *testing.T) {
 
 		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
 
-		success, failure, e := w.workOff(ctx, logger, 1)
+		success, failure, e := w.WorkOff(ctx, logger, 1, 1)
 		if e != nil {
 			t.Error(e)
 		}
@@ -273,7 +314,7 @@ func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 
 		tryRun := 3
 		for i := 0; i < tryRun; i++ {
-			success, failure, e := w.workOff(ctx, logger, 3)
+			success, failure, e := w.WorkOff(ctx, logger, 1, 3)
 			if e != nil {
 				t.Error(e)
 			}
@@ -332,7 +373,7 @@ func TestRunErrorAndFailAfterDefaultMaxRetry(t *testing.T) {
 			return
 		}
 
-		success, failure, e := w.workOff(ctx, logger, 3)
+		success, failure, e := w.WorkOff(ctx, logger, 1, 3)
 		if e != nil {
 			t.Error(e)
 		}
@@ -367,7 +408,7 @@ func TestRunAgain(t *testing.T) {
 
 		assertSQLCount(t, conn, "select count(*) from "+dbOpts.RunningTablename, 1)
 
-		success, failure, e := w.workOff(ctx, logger, 3)
+		success, failure, e := w.WorkOff(ctx, logger, 1, 3)
 		if e != nil {
 			t.Error(e)
 		}
