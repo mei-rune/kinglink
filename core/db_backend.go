@@ -704,9 +704,9 @@ func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []strin
 	sb.WriteString(backend.runningTablename)
 	sb.WriteString(" SET locked_at = now(), locked_by = $1 WHERE id in (SELECT id FROM ")
 	sb.WriteString(backend.runningTablename)
-	sb.WriteString(" WHERE ((run_at IS NULL OR run_at < now()) AND (locked_at IS NULL OR locked_at < (now() - interval '")
+	sb.WriteString(" WHERE ((run_at IS NULL OR run_at < now()) AND (locked_at IS NULL OR (locked_at < (now() - interval '")
 	sb.WriteString(backend.maxRunTimeSQL)
-	sb.WriteString("')) OR locked_by = $2) AND failed_at IS NULL")
+	sb.WriteString("') AND locked_by = $2))) AND failed_at IS NULL")
 
 	if backend.minPriority > 0 {
 		sb.WriteString(" AND priority >= ")

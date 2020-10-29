@@ -8,6 +8,7 @@ import (
 	stdlog "log"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -86,6 +87,35 @@ func TestRunMutiJob(t *testing.T) {
 
 		if interval > 60*time.Second {
 			t.Error("timeout! want 10s got ", interval)
+		}
+	})
+}
+
+func TestRunCount(t *testing.T) {
+	maxThreads := 1000
+	var count int32
+	mux := NewServeMux()
+	mux.Handle("test", HandlerFunc(func(ctx *Context, job *Job) error {
+		atomic.AddInt32(&count, 1)
+		time.Sleep(1 * time.Second)
+		return nil
+	}))
+	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
+		_, e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"})
+		if nil != e {
+			t.Error(e)
+			return
+		}
+
+		success, failure, e := w.WorkOff(ctx, logger, maxThreads, maxThreads)
+		if nil != e {
+			t.Error(e)
+		}
+		if success != 1 {
+			t.Error("want 1 got", success)
+		}
+		if failure != 0 {
+			t.Error("want 0 got", failure)
 		}
 	})
 }
