@@ -3,6 +3,7 @@ package kinglink
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/runner-mei/errors"
 	"github.com/runner-mei/kinglink/core"
@@ -39,6 +40,9 @@ func (jobsrv *jobClientService) Create(ctx context.Context, typeName string, arg
 		UUID:     opts.Uuid,
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "unique constraint") {
+			return "", errors.New("task is duplicated")
+		}
 		return "", err
 	}
 	return fmt.Sprint(id), nil
