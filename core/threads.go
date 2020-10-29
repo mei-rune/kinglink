@@ -10,6 +10,7 @@ import (
 
 type Threads interface {
 	Acquire(ctx context.Context) error
+	Release()
 	Go(run func() error)
 }
 
@@ -43,13 +44,13 @@ func (s *ErrGroupThreads) Acquire(ctx context.Context) error {
 	}
 }
 
-func (s *ErrGroupThreads) release() {
+func (s *ErrGroupThreads) Release() {
 	s.sem <- struct{}{}
 }
 
 func (s *ErrGroupThreads) Go(run func() error) {
 	s.wg.Go(func() error {
-		defer s.release()
+		defer s.Release()
 		return run()
 	})
 }
@@ -81,7 +82,7 @@ func (s *WaitGroupThreads) Acquire(ctx context.Context) error {
 	}
 }
 
-func (s *WaitGroupThreads) release() {
+func (s *WaitGroupThreads) Release() {
 	s.sem <- struct{}{}
 }
 
@@ -91,7 +92,7 @@ func (s *WaitGroupThreads) Go(run func() error) {
 	go func() {
 		defer func() {
 			s.wg.Done()
-			s.release()
+			s.Release()
 		}()
 		err := run()
 		if err != nil {

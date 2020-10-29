@@ -186,6 +186,13 @@ func (w *Worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger, poo
 	if e := pool.Acquire(ctx); e != nil {
 		return ErrJobsEmpty
 	}
+	needRelease := true
+	defer func() {
+		if needRelease {
+			pool.Release()
+		}
+	}()
+
 	job, e := w.backend.Fetch(ctx, w.name, w.options.Queues)
 	if nil != e {
 		if e.Error() == ErrNoContent {
@@ -211,6 +218,7 @@ func (w *Worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger, poo
 		}
 		return e
 	})
+	needRelease = false
 	return nil
 }
 

@@ -370,15 +370,21 @@ func (backend *dbBackend) Enqueue(ctx context.Context, job *Job) (interface{}, e
 		conn = backend.conn
 	}
 
+	var uuid sql.NullString
+	if s := strings.TrimSpace(job.UUID); s != "" {
+		uuid.String = s
+		uuid.Valid = true
+	}
+
 	var id int64
-	err := conn.QueryRowContext(ctx, backend.insertSQLString, job.Priority, job.MaxRetry, queue, job.UUID, job.Type, &job.Payload, job.Timeout, deadline, runAt).Scan(&id)
+	err := conn.QueryRowContext(ctx, backend.insertSQLString, job.Priority, job.MaxRetry, queue, uuid, job.Type, &job.Payload, job.Timeout, deadline, runAt).Scan(&id)
 	if err != nil {
 		args := []interface{}{job.Priority, job.MaxRetry, queue, job.UUID, job.Type, &job.Payload, job.Timeout, deadline, runAt}
 		log.For(ctx).Info(backend.insertSQLString, log.Stringer("args", log.SQLArgs(args)), log.Error(err))
 		return nil, err
 	}
 
-	args := []interface{}{job.Priority, job.MaxRetry, queue, job.UUID, job.Type, &job.Payload, job.Timeout, deadline, runAt}
+	args := []interface{}{job.Priority, job.MaxRetry, queue, uuid, job.Type, &job.Payload, job.Timeout, deadline, runAt}
 	log.For(ctx).Info(backend.insertSQLString, log.Stringer("args", log.SQLArgs(args)))
 	return id, nil
 }
@@ -844,7 +850,9 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 				  failed_at         timestamp with time zone,
 				  last_error        varchar(2000),
 				  created_at        timestamp with time zone NOT NULL,
-				  updated_at        timestamp with time zone NOT NULL
+				  updated_at        timestamp with time zone NOT NULL,
+
+				  UNIQUE(uuid)
 				);` +
 		`CREATE UNLOGGED TABLE IF NOT EXISTS ` + backend.resultTablename + ` (
 				  id                bigint PRIMARY KEY,
