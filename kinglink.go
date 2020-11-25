@@ -1,4 +1,4 @@
-//go:generate gogen client -ext=.client-gen.go client.go
+//go:generate gogen client -ext=.client-gen.go kinglink.go
 
 package kinglink
 
@@ -157,6 +157,9 @@ type Client interface {
 
 	// @http.DELETE(path="/:id")
 	Delete(ctx context.Context, id string) error
+
+	// @http.DELETE(path="", data="idList")
+	DeleteList(ctx context.Context, idList []string) error
 }
 
 func NewRemoteClient(urlstr string) (Client, error) {

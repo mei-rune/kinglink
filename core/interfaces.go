@@ -209,6 +209,7 @@ type ServerBackend interface {
 	ClearAll(ctx context.Context) error
 
 	Cancel(ctx context.Context, id interface{}) error
+	CancelList(ctx context.Context, idList []interface{}) error
 	Enqueue(ctx context.Context, job *Job) (interface{}, error)
 	DeleteResult(ctx context.Context, id interface{}) error
 	ClearWithTimeout(ctx context.Context, minutes int) error

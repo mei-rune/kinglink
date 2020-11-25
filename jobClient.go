@@ -78,6 +78,14 @@ func (jobsrv *jobClientService) Delete(ctx context.Context, id string) error {
 	return jobsrv.backend.Cancel(ctx, id)
 }
 
+func (jobsrv *jobClientService) DeleteList(ctx context.Context, idList []string) error {
+	copyed := make([]interface{}, len(idList))
+	for idx, id := range idList {
+		copyed[idx] = id
+	}
+	return jobsrv.backend.CancelList(ctx, copyed)
+}
+
 func NewjobClientService() *jobClientService {
 	return &jobClientService{}
 }

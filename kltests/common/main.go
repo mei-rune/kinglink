@@ -7,6 +7,6 @@ import (
 )
 
 var (
-	DBUrl = flag.String("kl_db_url", "host=127.0.0.1 port=35432 dbname=delayed_test user=delayedtest password=123456 sslmode=disable", "the db url")
+	DBUrl = flag.String("kl_db_url", "host=127.0.0.1 port=5432 dbname=delayed_test user=delayedtest password=123456 sslmode=disable", "the db url")
 	DBDrv = flag.String("kl_db_drv", "postgres", "the db driver")
 )

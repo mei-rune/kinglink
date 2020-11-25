@@ -10,7 +10,6 @@ import (
 )
 
 // Option is skipped
-// Handler is skipped
 // JobState is skipped
 // JobResult is skipped
 

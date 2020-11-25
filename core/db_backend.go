@@ -552,12 +552,30 @@ func (backend *dbBackend) copyResult(ctx context.Context, id interface{}, tx DBR
 	return nil
 }
 
+func (backend *dbBackend) CancelList(ctx context.Context, idList []interface{}) error {
+	return backend.withTx(ctx, func(ctx context.Context, tx DBRunner) error {
+		for _, id := range idList {
+			err := backend.cancel(ctx, tx, id)
+			if err != nil {
+				if err != ErrJobNotFound {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
 func (backend *dbBackend) Cancel(ctx context.Context, id interface{}) error {
 	conn := DbConnectionFromContext(ctx)
 	if conn == nil {
 		conn = backend.conn
 	}
 
+	return backend.cancel(ctx, conn, id)
+}
+
+func (backend *dbBackend) cancel(ctx context.Context, conn DBRunner, id interface{}) error {
 	if s, ok := id.(string); ok {
 		i64, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
@@ -600,7 +618,18 @@ func (backend *dbBackend) withTx(ctx context.Context, cb func(ctx context.Contex
 	var isOwner = false
 	tx := TxFromContext(ctx)
 	if tx == nil {
-		innertx, e := backend.conn.Begin()
+		var conn *sql.DB
+		if db := DbConnectionFromContext(ctx); db == nil {
+			if tmp, ok := db.(*sql.DB); ok {
+				conn = tmp
+			} else {
+				conn = backend.conn
+			}
+		} else {
+			conn = backend.conn
+		}
+
+		innertx, e := conn.Begin()
 		if e != nil {
 			return I18nError(backend.dbDrv, e)
 		}
