@@ -243,6 +243,21 @@ func (srv *Server) serveTasks(ctx context.Context, w http.ResponseWriter, r *htt
 			return
 		}
 	case http.MethodDelete:
+		if len(ss) == 0 {
+			var idList []string
+			if err := bind(r, &idList); err != nil {
+				returnError(ctx, w, r, http.StatusBadRequest, "读参数失败： "+err.Error())
+				return
+			}
+
+			err := srv.clientProxy.DeleteList(ctx, idList)
+			if err != nil {
+				returnError(ctx, w, r, http.StatusInternalServerError, err.Error())
+				return
+			}
+			returnOK(ctx, w, r, http.StatusOK, map[string]interface{}{"list": idList})
+			return
+		}
 		if len(ss) != 1 {
 			notFound(ctx, w, r)
 			return
