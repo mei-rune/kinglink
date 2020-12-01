@@ -584,7 +584,7 @@ func (backend *dbBackend) cancel(ctx context.Context, conn DBRunner, id interfac
 		id = i64
 	}
 
-	result, err := conn.ExecContext(ctx, backend.cancelQueuingSQLString, id, backend.maxRunTime)
+	result, err := conn.ExecContext(ctx, backend.cancelQueuingSQLString, id)
 	if err != nil {
 		return err
 	}
