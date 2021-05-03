@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/runner-mei/log"
 	_ "github.com/ziutek/mymysql/godrv"
+	"github.com/runner-mei/errors"
 )
 
 type DbOptions struct {
@@ -772,21 +772,26 @@ func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []strin
 	// fmt.Println(sb.String(), now, name, now, now.Truncate(backend.maxRunTime), name)
 	rows, e := backend.conn.QueryContext(ctx, queryStr, name, name)
 	if nil != e {
-		log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(e))
-
 		if sql.ErrNoRows == e {
-			return nil, nil
+			return nil, errors.WrapSQLError(e, queryStr, []interface{}{name, name})
 		}
+
+		log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(e))
 		return nil, errors.New("execute query sql failed while fetch job from the database, " + I18nString(backend.dbDrv, e.Error()))
 	}
 	defer rows.Close()
 
-	log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(e))
-
-	for rows.Next() {
-		return backend.readJobFromRow(rows)
+	if rows.Next() {
+		log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}))
+		job, err := backend.readJobFromRow(rows)
+		if err != nil {
+			log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(err))
+		} else {
+			log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}))
+		}
+		return job, err
 	}
-	return nil, nil
+	return nil, errors.WrapSQLError(sql.ErrNoRows, queryStr, []interface{}{name, name})
 }
 
 func NewBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {

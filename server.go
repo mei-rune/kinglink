@@ -2,6 +2,7 @@ package kinglink
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/runner-mei/kinglink/core"
+	"github.com/runner-mei/errors"
+	"github.com/runner-mei/log"
 )
 
 type Server struct {
@@ -57,16 +60,27 @@ func (srv *Server) serveBackend(ctx context.Context, w http.ResponseWriter, r *h
 		queues := queryParams["queues"]
 		name := queryParams.Get("name")
 
-		job, err := srv.backendProxy.Fetch(ctx, name, queues)
-		if err != nil {
-			returnError(ctx, w, r, http.StatusInternalServerError, err.Error())
-			return
+		for i :=0; ;i ++ {
+			job, err := srv.backendProxy.Fetch(ctx, name, queues)
+			if err != nil {
+				if !errors.Is(err, sql.ErrNoRows) {
+					returnError(ctx, w, r, http.StatusInternalServerError, err.Error())
+					return
+				}
+			}
+			if job != nil {
+				returnOK(ctx, w, r, http.StatusOK, job)
+				break
+			}
+			if i >= 10 {
+				if e := errors.ToSQLError(err); e != nil {
+					log.For(ctx).Info(e.SqlStr, log.Stringer("args", log.SQLArgs(e.Args)))
+				}
+				returnNoContent(ctx, w, r, http.StatusNoContent)
+				break
+			}
+			time.Sleep(1 * time.Second)
 		}
-		if job == nil {
-			returnNoContent(ctx, w, r, http.StatusNoContent)
-			return
-		}
-		returnOK(ctx, w, r, http.StatusOK, job)
 		return
 	case http.MethodPut:
 		fallthrough
