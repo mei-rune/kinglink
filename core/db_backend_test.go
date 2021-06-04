@@ -15,6 +15,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/runner-mei/kinglink/kltests/common"
 	"github.com/runner-mei/log"
+	"github.com/runner-mei/errors"
 )
 
 var (
@@ -795,7 +796,7 @@ func TestGetWithLocked(t *testing.T) {
 		}
 
 		newjob, e := backend.Fetch(ctx, "a", nil)
-		if e != nil {
+		if !errors.Is(e, sql.ErrNoRows) {
 			t.Error(e)
 			return
 		}
@@ -888,7 +889,7 @@ func TestGetWithFailed(t *testing.T) {
 		}
 
 		newjob, e := backend.Fetch(ctx, "a", nil)
-		if e != nil {
+		if  !errors.Is(e, sql.ErrNoRows) {
 			t.Error(e)
 			return
 		}

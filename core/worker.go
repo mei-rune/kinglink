@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"database/sql"
 	"time"
 
 	"github.com/runner-mei/log"
@@ -18,7 +19,7 @@ import (
 var (
 	ErrJobsEmpty   = errors.New("jobs is empty")
 	ErrJobNotFound = errors.New("job isnot found")
-
+	ErrNoDeleteBecaseRunning = errors.New("job cannot cancel, becase it runnning")
 	ErrNoContent = "no content"
 )
 
@@ -196,6 +197,9 @@ func (w *Worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger, poo
 	job, e := w.backend.Fetch(ctx, w.name, w.options.Queues)
 	if nil != e {
 		if e.Error() == ErrNoContent {
+			return ErrJobsEmpty
+		}
+		if errors.Is(e, sql.ErrNoRows) {
 			return ErrJobsEmpty
 		}
 		return e

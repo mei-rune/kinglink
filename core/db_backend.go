@@ -58,6 +58,8 @@ type dbBackend struct {
 	clearAllResult          string
 	cancelQueuingSQLString  string
 	cancelResultSQLString   string
+	forceCancelQueuingSQLString string
+	countQueuingByIDSQLString string	
 }
 
 func (backend *dbBackend) Conn() *sql.DB {
@@ -611,6 +613,16 @@ func (backend *dbBackend) cancel(ctx context.Context, conn DBRunner, id interfac
 	if rowsAffected > 0 {
 		return nil
 	}
+
+	var count int64
+	err =  conn.QueryRowContext(ctx, backend.countQueuingByIDSQLString, id).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrNoDeleteBecaseRunning
+	}
+
 	return ErrJobNotFound
 }
 
@@ -786,10 +798,11 @@ func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []strin
 		job, err := backend.readJobFromRow(rows)
 		if err != nil {
 			log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(err))
-		} else {
-			log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}))
+			return nil, errors.WrapSQLError(err, queryStr, []interface{}{name, name})
 		}
-		return job, err
+
+		log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}))
+		return job, nil
 	}
 	return nil, errors.WrapSQLError(sql.ErrNoRows, queryStr, []interface{}{name, name})
 }
@@ -829,7 +842,7 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 			maxPriority:          opts.MaxPriority,
 			maxRunTime:           opts.MaxRunTime,
 			maxRunTimeSQL:        maxRunTimeSQL,
-			readQueuingSQLString: "SELECT " + fieldsSqlString + " FROM " + dbopts.RunningTablename + " WHERE id = #{id}",
+			readQueuingSQLString: "SELECT " + fieldsSqlString + " FROM " + dbopts.RunningTablename + " WHERE id = $1",
 			insertSQLString: "INSERT INTO " + dbopts.RunningTablename + "(priority, max_retry, retried, queue, uuid, type, payload, timeout, deadline, run_at, locked_at, locked_by, failed_at, last_error, created_at, updated_at)" +
 				" VALUES($1, $2, 0, $3, $4, $5, $6, $7, $8, $9, NULL, NULL, NULL, NULL, now(), now()) RETURNING id",
 			clearLocksSQLString: "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL WHERE locked_by = $1",
@@ -850,6 +863,9 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 			clearAllQueuing:         "DELETE FROM " + dbopts.RunningTablename,
 			clearAllResult:          "DELETE FROM " + dbopts.ResultTablename,
 			cancelQueuingSQLString:  "DELETE FROM " + dbopts.RunningTablename + " WHERE id = $1 AND (locked_at IS NULL OR locked_at < (now() - interval '" + maxRunTimeSQL + "')) ",
+			forceCancelQueuingSQLString:  "DELETE FROM " + dbopts.RunningTablename + " WHERE id = $1",
+			countQueuingByIDSQLString:  "SELECT count(*) FROM " + dbopts.RunningTablename + " WHERE id = $1",
+	
 			cancelResultSQLString:   "DELETE FROM " + dbopts.ResultTablename + " WHERE id = $1",
 		},
 	}
