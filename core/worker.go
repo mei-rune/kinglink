@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/runner-mei/log"
@@ -22,6 +22,44 @@ var (
 	ErrNoDeleteBecaseRunning = errors.New("job cannot cancel, becase it runnning")
 	ErrNoContent = "no content"
 )
+
+type WithSQL struct {
+	Err    error
+	SqlStr string
+	Args   []interface{}
+}
+
+func (w *WithSQL) Error() string { return w.Err.Error() }
+
+func (w *WithSQL) Unwrap() error { return w.Err }
+
+func WrapSQLError(err error, sqlStr string, args []interface{}) error {
+	if sqlStr == "" {
+		return err
+	}
+
+	return &WithSQL{Err: err, SqlStr: sqlStr, Args: args}
+}
+
+func ToSQLError(err error) *WithSQL {
+	if err == nil {
+		return nil
+	}
+	e, _ := err.(*WithSQL)
+	return e
+}
+
+func IsErrNoRows(e error) bool {
+	if e == sql.ErrNoRows {
+		return true
+	}
+
+	sqlErr := ToSQLError(e)
+	if sqlErr != nil {
+		return sqlErr.Err == sql.ErrNoRows
+	}
+	return false
+}
 
 type ErrAgain struct {
 	ts time.Time
@@ -199,7 +237,7 @@ func (w *Worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger, poo
 		if e.Error() == ErrNoContent {
 			return ErrJobsEmpty
 		}
-		if errors.Is(e, sql.ErrNoRows) {
+		if IsErrNoRows(e) {
 			return ErrJobsEmpty
 		}
 		return e

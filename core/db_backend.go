@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"errors"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	"github.com/runner-mei/log"
 	_ "github.com/ziutek/mymysql/godrv"
-	"github.com/runner-mei/errors"
 )
 
 type DbOptions struct {
@@ -785,7 +785,7 @@ func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []strin
 	rows, e := backend.conn.QueryContext(ctx, queryStr, name, name)
 	if nil != e {
 		if sql.ErrNoRows == e {
-			return nil, errors.WrapSQLError(e, queryStr, []interface{}{name, name})
+			return nil, WrapSQLError(e, queryStr, []interface{}{name, name})
 		}
 
 		log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(e))
@@ -798,13 +798,13 @@ func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []strin
 		job, err := backend.readJobFromRow(rows)
 		if err != nil {
 			log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(err))
-			return nil, errors.WrapSQLError(err, queryStr, []interface{}{name, name})
+			return nil, WrapSQLError(err, queryStr, []interface{}{name, name})
 		}
 
 		log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}))
 		return job, nil
 	}
-	return nil, errors.WrapSQLError(sql.ErrNoRows, queryStr, []interface{}{name, name})
+	return nil, WrapSQLError(sql.ErrNoRows, queryStr, []interface{}{name, name})
 }
 
 func NewBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
