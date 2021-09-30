@@ -13,9 +13,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/runner-mei/errors"
 	"github.com/runner-mei/kinglink/kltests/common"
 	"github.com/runner-mei/log"
-	"github.com/runner-mei/errors"
 )
 
 var (
@@ -81,7 +81,7 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
-			newjob, e := backend.Fetch(ctx, "tw", nil)
+			newjob, e := backend.Fetch(ctx, "tw", []string{"test"})
 			if nil != e {
 				t.Error(e)
 				return
@@ -134,7 +134,7 @@ func TestEnqueue(t *testing.T) {
 			}
 
 			fmt.Println("============")
-			newjob, e := backend.Fetch(ctx, "abc", nil)
+			newjob, e := backend.Fetch(ctx, "abc", []string{"test"})
 			if nil != e {
 				t.Error(e)
 				return
@@ -221,7 +221,7 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
-			newjob, e := backend.Fetch(ctx, "abc", nil)
+			newjob, e := backend.Fetch(ctx, "abc", []string{"test"})
 			if nil != e {
 				t.Error(e)
 				return
@@ -332,7 +332,7 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
-			newjob, e := backend.Fetch(ctx, "abc", nil)
+			newjob, e := backend.Fetch(ctx, "abc", []string{"test"})
 			if nil != e {
 				t.Error(e)
 				return
@@ -749,7 +749,7 @@ func TestPriority(t *testing.T) {
 		}
 
 		for i := 9; i > 0; i-- {
-			newjob, e := backend.Fetch(ctx, "tw", nil)
+			newjob, e := backend.Fetch(ctx, "tw", []string{"test"})
 			if nil != e {
 				t.Error(e)
 				return
@@ -841,7 +841,7 @@ func TestLockedJobInGet(t *testing.T) {
 			return
 		}
 
-		newjob, e := backend.Fetch(ctx, "aa", nil)
+		newjob, e := backend.Fetch(ctx, "aa", []string{"test"})
 		if e != nil {
 			t.Error(e)
 			return
@@ -888,8 +888,8 @@ func TestGetWithFailed(t *testing.T) {
 			return
 		}
 
-		newjob, e := backend.Fetch(ctx, "a", nil)
-		if  !errors.Is(e, sql.ErrNoRows) {
+		newjob, e := backend.Fetch(ctx, "a", []string{"test"})
+		if !errors.Is(e, sql.ErrNoRows) {
 			t.Error(e)
 			return
 		}

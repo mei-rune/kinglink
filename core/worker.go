@@ -153,19 +153,16 @@ func (w *Worker) Run(ctx context.Context, threads int, exitOnComplete bool) {
 		n, e := w.workOff(ctx, logger, &pool, &stats, 30)
 		if e != nil {
 			w.lastError.Store(e.Error())
-
 			logger.Error("run error", log.Error(e))
-			continue
-		}
+		} else {
+			w.lastError.Store("")
+			logger.Info("run ok", log.Int("add", n))
 
-		w.lastError.Store("")
-
-		logger.Info("run ok", log.Int("add", n))
-
-		if n == 0 {
-			if exitOnComplete {
-				isRunning = false
-				break
+			if n == 0 {
+				if exitOnComplete {
+					isRunning = false
+					break
+				}
 			}
 		}
 

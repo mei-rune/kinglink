@@ -3,10 +3,10 @@ package core
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
-	"errors"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -41,25 +41,25 @@ type dbBackend struct {
 	maxRunTime    time.Duration
 	maxRunTimeSQL string
 
-	readQueuingSQLString    string
-	insertSQLString         string
-	clearLocksSQLString     string
-	retryNoErrorSQLString   string
-	retryErrorSQLString     string
-	replyErrorSQLString     string
-	copySQLString           string
-	deleteSQLString         string
-	readResultSQLString     string
-	deleteResultSQLString   string
-	deleteResultWithTimeout string
-	readStateSQLString      string
-	queryStateSQLString     string
-	clearAllQueuing         string
-	clearAllResult          string
-	cancelQueuingSQLString  string
-	cancelResultSQLString   string
+	readQueuingSQLString        string
+	insertSQLString             string
+	clearLocksSQLString         string
+	retryNoErrorSQLString       string
+	retryErrorSQLString         string
+	replyErrorSQLString         string
+	copySQLString               string
+	deleteSQLString             string
+	readResultSQLString         string
+	deleteResultSQLString       string
+	deleteResultWithTimeout     string
+	readStateSQLString          string
+	queryStateSQLString         string
+	clearAllQueuing             string
+	clearAllResult              string
+	cancelQueuingSQLString      string
+	cancelResultSQLString       string
 	forceCancelQueuingSQLString string
-	countQueuingByIDSQLString string	
+	countQueuingByIDSQLString   string
 }
 
 func (backend *dbBackend) Conn() *sql.DB {
@@ -615,7 +615,7 @@ func (backend *dbBackend) cancel(ctx context.Context, conn DBRunner, id interfac
 	}
 
 	var count int64
-	err =  conn.QueryRowContext(ctx, backend.countQueuingByIDSQLString, id).Scan(&count)
+	err = conn.QueryRowContext(ctx, backend.countQueuingByIDSQLString, id).Scan(&count)
 	if err != nil {
 		return err
 	}
@@ -759,6 +759,7 @@ func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []strin
 	}
 	switch len(queues) {
 	case 0:
+		sb.WriteString(" AND (queue IS NULL OR queue = '')")
 	case 1:
 		sb.WriteString(" AND queue = '")
 		sb.WriteString(queues[0])
@@ -855,18 +856,18 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 			deleteSQLString: "DELETE FROM " + dbopts.RunningTablename + " WHERE id = $1",
 			copySQLString: `INSERT INTO ` + dbopts.ResultTablename + ` SELECT id, priority, retried, queue, uuid, type, payload, locked_by as run_by, last_error, created_at, updated_at FROM ` +
 				dbopts.RunningTablename + ` WHERE id = $1`,
-			readResultSQLString:     "SELECT " + resultFields + " FROM " + dbopts.ResultTablename + " WHERE id = $1",
-			deleteResultSQLString:   "DELETE FROM " + dbopts.ResultTablename + " WHERE id = $1",
-			deleteResultWithTimeout: "DELETE FROM " + dbopts.ResultTablename + " WHERE (updated_at + - interval '%d Minutes') <  now()",
-			readStateSQLString:      "SELECT " + stateFields + " FROM " + dbopts.ViewTablename + " WHERE id = $1",
-			queryStateSQLString:     "SELECT " + stateFields + " FROM " + dbopts.ViewTablename,
-			clearAllQueuing:         "DELETE FROM " + dbopts.RunningTablename,
-			clearAllResult:          "DELETE FROM " + dbopts.ResultTablename,
-			cancelQueuingSQLString:  "DELETE FROM " + dbopts.RunningTablename + " WHERE id = $1 AND (locked_at IS NULL OR locked_at < (now() - interval '" + maxRunTimeSQL + "')) ",
-			forceCancelQueuingSQLString:  "DELETE FROM " + dbopts.RunningTablename + " WHERE id = $1",
-			countQueuingByIDSQLString:  "SELECT count(*) FROM " + dbopts.RunningTablename + " WHERE id = $1",
-	
-			cancelResultSQLString:   "DELETE FROM " + dbopts.ResultTablename + " WHERE id = $1",
+			readResultSQLString:         "SELECT " + resultFields + " FROM " + dbopts.ResultTablename + " WHERE id = $1",
+			deleteResultSQLString:       "DELETE FROM " + dbopts.ResultTablename + " WHERE id = $1",
+			deleteResultWithTimeout:     "DELETE FROM " + dbopts.ResultTablename + " WHERE (updated_at + - interval '%d Minutes') <  now()",
+			readStateSQLString:          "SELECT " + stateFields + " FROM " + dbopts.ViewTablename + " WHERE id = $1",
+			queryStateSQLString:         "SELECT " + stateFields + " FROM " + dbopts.ViewTablename,
+			clearAllQueuing:             "DELETE FROM " + dbopts.RunningTablename,
+			clearAllResult:              "DELETE FROM " + dbopts.ResultTablename,
+			cancelQueuingSQLString:      "DELETE FROM " + dbopts.RunningTablename + " WHERE id = $1 AND (locked_at IS NULL OR locked_at < (now() - interval '" + maxRunTimeSQL + "')) ",
+			forceCancelQueuingSQLString: "DELETE FROM " + dbopts.RunningTablename + " WHERE id = $1",
+			countQueuingByIDSQLString:   "SELECT count(*) FROM " + dbopts.RunningTablename + " WHERE id = $1",
+
+			cancelResultSQLString: "DELETE FROM " + dbopts.ResultTablename + " WHERE id = $1",
 		},
 	}
 
