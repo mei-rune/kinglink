@@ -510,7 +510,7 @@ func TestWorkerWithRunOK(t *testing.T) {
 			return
 		}
 
-		w.Run(srv.Ctx, true)
+		w.Run(srv.Ctx, 1, true)
 
 		t.Run("client.get", func(t *testing.T) {
 			state, err := srv.RemoteClient.Get(srv.Ctx, id)
@@ -593,7 +593,7 @@ func TestWorkerWithRunFail(t *testing.T) {
 			return
 		}
 
-		w.Run(srv.Ctx, true)
+		w.Run(srv.Ctx, 1, true)
 
 		t.Run("client.get", func(t *testing.T) {
 			state, err := srv.RemoteClient.Get(srv.Ctx, id)

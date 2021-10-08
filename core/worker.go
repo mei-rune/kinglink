@@ -2,14 +2,14 @@ package core
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"database/sql"
-	"errors"
 	"time"
 
 	"github.com/runner-mei/log"
@@ -17,10 +17,11 @@ import (
 
 // var work_error = expvar.NewString("worker")
 var (
-	ErrJobsEmpty   = errors.New("jobs is empty")
-	ErrJobNotFound = errors.New("job isnot found")
+	ErrThreadBusy            = errors.New("threads is busy")
+	ErrJobsEmpty             = errors.New("jobs is empty")
+	ErrJobNotFound           = errors.New("job isnot found")
 	ErrNoDeleteBecaseRunning = errors.New("job cannot cancel, becase it runnning")
-	ErrNoContent = "no content"
+	ErrNoContent             = "no content"
 )
 
 type WithSQL struct {
@@ -148,16 +149,28 @@ func (w *Worker) Run(ctx context.Context, threads int, exitOnComplete bool) {
 
 	now := time.Now()
 	isRunning := true
+	logLimiter := time.Now()
 	for isRunning {
 
 		n, e := w.workOff(ctx, logger, &pool, &stats, 30)
-		if e != nil {
+		if e != nil && e != ErrThreadBusy {
 			w.lastError.Store(e.Error())
 			logger.Error("run error", log.Error(e))
 		} else {
-			w.lastError.Store("")
-			logger.Info("run ok", log.Int("add", n))
+			if e == ErrThreadBusy {
+				w.lastError.Store(e.Error())
+			} else {
+				w.lastError.Store("")
+			}
 
+			if n > 0 && time.Now().Sub(logLimiter) > 5*time.Minute {
+				if e == ErrThreadBusy {
+					logger.Info("all threads is busy", log.Int("jobs", n))
+				} else {
+					logger.Info("run ok", log.Int("jobs", n))
+				}
+				logLimiter = time.Now()
+			}
 			if n == 0 {
 				if exitOnComplete {
 					isRunning = false
@@ -220,7 +233,7 @@ func (w *Worker) workOff(ctx context.Context, logger log.Logger, pool Threads, s
 // If no jobs are left we return nil
 func (w *Worker) reserveAndRunOneJob(ctx context.Context, logger log.Logger, pool Threads, stats *stats) error {
 	if e := pool.Acquire(ctx); e != nil {
-		return ErrJobsEmpty
+		return ErrThreadBusy
 	}
 	needRelease := true
 	defer func() {
