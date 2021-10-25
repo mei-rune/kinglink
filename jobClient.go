@@ -41,7 +41,7 @@ func (jobsrv *jobClientService) Create(ctx context.Context, typeName string, arg
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "unique constraint") {
-			return "", errors.New("task is duplicated")
+			return "", ErrDuplicateTask //errors.New("task is duplicated")
 		}
 		return "", err
 	}

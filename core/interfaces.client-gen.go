@@ -17,6 +17,16 @@ type WorkBackendClient struct {
 	Proxy *resty.Proxy
 }
 
+func (client WorkBackendClient) ClearLocks(ctx context.Context, queues []string) error {
+	request := resty.NewRequest(client.Proxy, "/clear_locks").
+		SetBody(map[string]interface{}{
+			"queues": queues,
+		})
+
+	defer resty.ReleaseRequest(client.Proxy, request)
+	return request.PUT(ctx)
+}
+
 func (client WorkBackendClient) Fetch(ctx context.Context, name string, queues []string) (*Job, error) {
 	var result Job
 

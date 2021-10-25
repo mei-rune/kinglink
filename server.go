@@ -59,6 +59,7 @@ func (srv *Server) serveBackend(ctx context.Context, w http.ResponseWriter, r *h
 		queryParams := r.URL.Query()
 		queues := queryParams["queues"]
 		name := queryParams.Get("name")
+		// srv.touchWorker(name)
 
 		for i :=0; ;i ++ {
 			job, err := srv.backendProxy.Fetch(ctx, name, queues)
@@ -89,8 +90,31 @@ func (srv *Server) serveBackend(ctx context.Context, w http.ResponseWriter, r *h
 			notFound(ctx, w, r)
 			return
 		}
-
 		if len(ss) != 2 {
+			if ss[0] == "clear_locks" {
+				var bindArgs struct {
+					Queues      []string    `json:"queues,omitempty"`
+				}
+				if err := bind(r, &bindArgs); err != nil {
+					returnError(ctx, w, r, http.StatusBadRequest, "重置任务失败, 读参数发生错误： "+err.Error())
+					return
+				}
+				queryParams := r.URL.Query()
+				queues := queryParams["queues"]
+				if len(queues) == 0 {
+					queues = bindArgs.Queues
+				} else if len(bindArgs.Queues) > 0 {
+					queues = append(queues, bindArgs.Queues...)
+				}
+				err := srv.backendProxy.ClearLocks(ctx, queues)
+				if err != nil {
+					returnError(ctx, w, r, http.StatusInternalServerError, "重置任务失败： "+err.Error())
+					return
+				}
+				returnOK(ctx, w, r, http.StatusOK, "OK")
+				return
+			}
+
 			notFound(ctx, w, r)
 			return
 		}
@@ -229,13 +253,17 @@ func (srv *Server) serveTasks(ctx context.Context, w http.ResponseWriter, r *htt
 				bindArgs.TypeName = bindArgs.Type
 			}
 			if err := bind(r, &bindArgs); err != nil {
-				returnError(ctx, w, r, http.StatusBadRequest, "读参数失败： "+err.Error())
+				returnError(ctx, w, r, http.StatusBadRequest, "创建任务失败，读参数发生错误： "+err.Error())
 				return
 			}
 
 			id, err := srv.clientProxy.Create(ctx, bindArgs.TypeName, bindArgs.Args, bindArgs.Options)
 			if err != nil {
-				returnError(ctx, w, r, http.StatusInternalServerError, "读参数失败： "+err.Error())
+				if err == ErrDuplicateTask {
+					returnError(ctx, w, r, http.StatusInternalServerError, "创建任务失败，任务已经在运行")
+				} else {
+					returnError(ctx, w, r, http.StatusInternalServerError, "创建任务失败： "+err.Error())
+				}
 				return
 			}
 			returnText(ctx, w, r, http.StatusCreated, id)
@@ -245,12 +273,12 @@ func (srv *Server) serveTasks(ctx context.Context, w http.ResponseWriter, r *htt
 		if len(ss) == 1 && ss[0] == "batch" {
 			var requests []BatchRequest
 			if err := bind(r, &requests); err != nil {
-				returnError(ctx, w, r, http.StatusBadRequest, "读参数失败： "+err.Error())
+				returnError(ctx, w, r, http.StatusBadRequest, "创建任务失败，读参数发生错误： "+err.Error())
 				return
 			}
 			result, err := srv.clientProxy.BatchCreate(ctx, requests)
 			if err != nil {
-				returnError(ctx, w, r, http.StatusInternalServerError, "读参数失败： "+err.Error())
+				returnError(ctx, w, r, http.StatusInternalServerError, "创建任务失败： "+err.Error())
 				return
 			}
 			returnOK(ctx, w, r, http.StatusCreated, result)
@@ -260,13 +288,13 @@ func (srv *Server) serveTasks(ctx context.Context, w http.ResponseWriter, r *htt
 		if len(ss) == 0 {
 			var idList []string
 			if err := bind(r, &idList); err != nil {
-				returnError(ctx, w, r, http.StatusBadRequest, "读参数失败： "+err.Error())
+				returnError(ctx, w, r, http.StatusBadRequest, "删除任务失败，读参数发生错误： "+err.Error())
 				return
 			}
 
 			err := srv.clientProxy.DeleteList(ctx, idList)
 			if err != nil {
-				returnError(ctx, w, r, http.StatusInternalServerError, err.Error())
+				returnError(ctx, w, r, http.StatusInternalServerError,"删除任务失败： " + err.Error())
 				return
 			}
 			returnOK(ctx, w, r, http.StatusOK, map[string]interface{}{"list": idList})
@@ -278,7 +306,7 @@ func (srv *Server) serveTasks(ctx context.Context, w http.ResponseWriter, r *htt
 		}
 		err := srv.clientProxy.Delete(ctx, ss[0])
 		if err != nil {
-			returnError(ctx, w, r, http.StatusInternalServerError, err.Error())
+			returnError(ctx, w, r, http.StatusInternalServerError, "删除任务失败： " + err.Error())
 			return
 		}
 		returnOK(ctx, w, r, http.StatusOK, map[string]interface{}{"id": ss[0]})

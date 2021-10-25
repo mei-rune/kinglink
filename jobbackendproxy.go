@@ -11,6 +11,11 @@ type jobBackendProxy struct {
 	backend core.WorkBackend
 }
 
+
+func (broker *jobBackendProxy) ClearLocks(ctx context.Context, queues []string) error {
+	return broker.backend.ClearLocks(ctx, queues)
+}
+
 func (broker *jobBackendProxy) Fetch(ctx context.Context, name string, queues []string) (*core.Job, error) {
 	return broker.backend.Fetch(ctx, name, queues)
 }

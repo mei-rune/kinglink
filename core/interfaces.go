@@ -191,6 +191,9 @@ type JobResult struct {
 }
 
 type WorkBackend interface {
+	// @http.PUT(path="/clear_locks")
+	ClearLocks(ctx context.Context, queues []string) error
+
 	// @http.GET(path="")
 	Fetch(ctx context.Context, name string, queues []string) (*Job, error)
 

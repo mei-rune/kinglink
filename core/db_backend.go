@@ -44,6 +44,7 @@ type dbBackend struct {
 	readQueuingSQLString        string
 	insertSQLString             string
 	clearLocksSQLString         string
+	clearLocksByQueueSQLString string
 	retryNoErrorSQLString       string
 	retryErrorSQLString         string
 	replyErrorSQLString         string
@@ -78,6 +79,16 @@ func (backend *dbBackend) clearLocks(workerName string) error {
 	// "UPDATE "+backend.RunningTablename+" SET locked_by = NULL, locked_at = NULL WHERE locked_by = $1"
 	_, e := backend.conn.Exec(backend.clearLocksSQLString, workerName)
 	return I18nError(backend.dbDrv, e)
+}
+
+func (backend *dbBackend) ClearLocks(ctx context.Context, queues []string) error {
+	for _, queue := range queues {
+		_, e := backend.conn.ExecContext(ctx, backend.clearLocksByQueueSQLString, queue)
+		if e != nil {
+			return I18nError(backend.dbDrv, e)
+		}
+	}
+	return nil
 }
 
 func (backend *dbBackend) log(ctx context.Context, sqlstring string, args []interface{}, err error) {
@@ -847,6 +858,7 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 			insertSQLString: "INSERT INTO " + dbopts.RunningTablename + "(priority, max_retry, retried, queue, uuid, type, payload, timeout, deadline, run_at, locked_at, locked_by, failed_at, last_error, created_at, updated_at)" +
 				" VALUES($1, $2, 0, $3, $4, $5, $6, $7, $8, $9, NULL, NULL, NULL, NULL, now(), now()) RETURNING id",
 			clearLocksSQLString: "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL WHERE locked_by = $1",
+			clearLocksByQueueSQLString: "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL, failed_at = NULL, last_error = 'reset' WHERE queue = $1",
 			retryNoErrorSQLString: "UPDATE " + dbopts.RunningTablename +
 				" SET retried = $1, run_at = $2, payload=$3, failed_at=NULL, last_error=NULL, locked_at=NULL, locked_by=NULL, updated_at = now() WHERE id = $4",
 			retryErrorSQLString: "UPDATE " + dbopts.RunningTablename +
