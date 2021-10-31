@@ -303,11 +303,13 @@ func TestRetry(t *testing.T) {
 				Timeout:   0,
 				UUID:      "",
 				Retried:   2,
+				LastAt: time.Now(),
 				LastError: "abcerr",
 			}
 
 			opts := []cmp.Option{
 				cmpopts.IgnoreFields(kinglink.Job{}, "ID", "LockedAt", "CreatedAt", "UpdatedAt", "RunAt"),
+				cmpopts.EquateApproxTime(1 * time.Second),
 				cmp.Comparer(func(a, b kinglink.Payload) bool {
 					return a.String() == b.String()
 				}),

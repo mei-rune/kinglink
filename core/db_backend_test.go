@@ -65,7 +65,7 @@ func TestEnqueue(t *testing.T) {
 			Type:      "testtype",
 			Payload:   MakePayload(nil, map[string]interface{}{"a": "b"}),
 			UUID:      "uuidtest",
-			FailedAt:  time.Now().Add(2 * time.Second),
+			LastAt:  time.Now().Add(2 * time.Second),
 			LastError: "error",
 			LockedAt:  time.Now().Add(3 * time.Second),
 			LockedBy:  "by",
@@ -98,7 +98,7 @@ func TestEnqueue(t *testing.T) {
 
 			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
 			job.LockedBy = "tw"
-			job.FailedAt = time.Time{}
+			job.LastAt = time.Time{}
 			job.LastError = ""
 			job.Retried = 0
 
@@ -149,9 +149,9 @@ func TestEnqueue(t *testing.T) {
 
 			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
 			job.LockedBy = "abc"
+			job.LastAt = time.Time{}
 			job.LastError = ""
 			job.Retried = 2
-			job.FailedAt = time.Time{}
 
 			if !cmp.Equal(job, newjob, opts...) {
 				t.Error(cmp.Diff(job, newjob, opts...))
@@ -229,6 +229,7 @@ func TestEnqueue(t *testing.T) {
 
 			opts := []cmp.Option{
 				cmpopts.IgnoreFields(Job{}, "ID", "LockedAt", "RunAt", "Deadline", "CreatedAt", "UpdatedAt"),
+				cmpopts.EquateApproxTime(1 * time.Second),
 				cmp.Comparer(func(a, b Payload) bool {
 					return a.String() == b.String()
 				}),
@@ -236,9 +237,9 @@ func TestEnqueue(t *testing.T) {
 
 			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
 			job.LockedBy = "abc"
+			job.LastAt = time.Now()
 			job.LastError = "errrr"
 			job.Retried = 2
-			job.FailedAt = time.Time{}
 
 			newjob.RunAt = newjob.RunAt.Local()
 			newjob.Deadline = newjob.Deadline.Local()
@@ -339,7 +340,7 @@ func TestEnqueue(t *testing.T) {
 			}
 
 			opts := []cmp.Option{
-				cmpopts.IgnoreFields(Job{}, "ID", "LockedAt", "RunAt", "FailedAt", "Deadline", "CreatedAt", "UpdatedAt"),
+				cmpopts.IgnoreFields(Job{}, "ID", "LockedAt", "RunAt", "LastAt", "Deadline", "CreatedAt", "UpdatedAt"),
 				cmp.Comparer(func(a, b Payload) bool {
 					return a.String() == b.String()
 				}),
@@ -389,9 +390,9 @@ func TestEnqueue(t *testing.T) {
 
 			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
 			job.LockedBy = "abc"
+			job.LastAt = time.Time{}
 			job.LastError = ""
 			job.Retried = 2
-			job.FailedAt = time.Time{}
 
 			state, err := backend.GetState(ctx, id)
 			if err != nil {
@@ -470,9 +471,9 @@ func TestEnqueue(t *testing.T) {
 
 			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
 			job.LockedBy = "abc"
+			job.LastAt = time.Time{}
 			job.LastError = "errrr"
 			job.Retried = 2
-			job.FailedAt = time.Time{}
 
 			state, err := backend.GetState(ctx, id)
 			if err != nil {
@@ -550,9 +551,9 @@ func TestEnqueue(t *testing.T) {
 
 			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
 			job.LockedBy = "abc"
+			job.LastAt = time.Time{}
 			job.LastError = ""
 			job.Retried = 0
-			job.FailedAt = time.Time{}
 
 			state, err := backend.GetState(ctx, id)
 			if err != nil {
@@ -631,9 +632,9 @@ func TestEnqueue(t *testing.T) {
 
 			// 这些字段不应该存入表中的， 所以清空后比较一下， 以确保真的为空
 			job.LockedBy = "abc"
+			job.LastAt = time.Time{}
 			job.LastError = "errrr"
 			job.Retried = 0
-			job.FailedAt = time.Time{}
 
 			state, err := backend.GetState(ctx, id)
 			if err != nil {
@@ -724,7 +725,7 @@ func TestPriority(t *testing.T) {
 			Type:      "testtype",
 			Payload:   MakePayload(nil, map[string]interface{}{"a": "b"}),
 			UUID:      "uuidtest",
-			FailedAt:  time.Now().Add(2 * time.Second),
+			LastAt:  time.Now().Add(2 * time.Second),
 			LastError: "error",
 			LockedAt:  time.Now().Add(3 * time.Second),
 			LockedBy:  "by",
@@ -775,7 +776,7 @@ func TestGetWithLocked(t *testing.T) {
 			Type:      "testtype",
 			Payload:   MakePayload(nil, map[string]interface{}{"a": "b"}),
 			UUID:      "uuidtest",
-			FailedAt:  time.Now().Add(2 * time.Second),
+			LastAt:  time.Now().Add(2 * time.Second),
 			LastError: "error",
 			LockedAt:  time.Now().Add(3 * time.Second),
 			LockedBy:  "by",
@@ -821,7 +822,7 @@ func TestLockedJobInGet(t *testing.T) {
 			Type:      "testtype",
 			Payload:   MakePayload(nil, map[string]interface{}{"a": "b"}),
 			UUID:      "uuidtest",
-			FailedAt:  time.Now().Add(2 * time.Second),
+			LastAt:  time.Now().Add(2 * time.Second),
 			LastError: "error",
 			LockedAt:  time.Now().Add(3 * time.Second),
 			LockedBy:  "by",
@@ -867,7 +868,7 @@ func TestGetWithFailed(t *testing.T) {
 			Type:      "testtype",
 			Payload:   MakePayload(nil, map[string]interface{}{"a": "b"}),
 			UUID:      "uuidtest",
-			FailedAt:  time.Now().Add(2 * time.Second),
+			LastAt:  time.Now().Add(2 * time.Second),
 			LastError: "error",
 			LockedAt:  time.Now().Add(3 * time.Second),
 			LockedBy:  "by",

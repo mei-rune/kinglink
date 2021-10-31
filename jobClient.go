@@ -40,7 +40,9 @@ func (jobsrv *jobClientService) Create(ctx context.Context, typeName string, arg
 		UUID:     opts.Uuid,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "unique constraint") {
+		if strings.Contains(err.Error(), "unique constraint") ||
+		strings.Contains(err.Error(), "违反唯一约束") ||
+		strings.Contains(err.Error(), "kl_jobs_uuid_key") {
 			return "", ErrDuplicateTask //errors.New("task is duplicated")
 		}
 		return "", err

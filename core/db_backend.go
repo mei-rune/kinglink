@@ -124,7 +124,7 @@ func (backend *dbBackend) ClearAll(ctx context.Context) error {
 }
 
 const stateFields = `id, priority, max_retry, retried, queue, uuid, type, payload,
-				  timeout, deadline, run_at, locked_at, run_by, last_error, completed_at, created_at, updated_at`
+				  timeout, deadline, run_at, locked_at, run_by, last_at, last_error, completed_at, created_at, updated_at`
 
 func (backend *dbBackend) readStateFromRow(row interface {
 	Scan(dest ...interface{}) error
@@ -141,6 +141,7 @@ func (backend *dbBackend) readStateFromRow(row interface {
 	var lockedAt NullTime
 	// var lockedBy sql.NullString
 	var runBy sql.NullString
+	var lastAt NullTime
 	var lastError sql.NullString
 	var completedAt NullTime
 	var createdAt NullTime
@@ -160,6 +161,7 @@ func (backend *dbBackend) readStateFromRow(row interface {
 		&runAt,
 		&lockedAt,
 		&runBy,
+		&lastAt,
 		&lastError,
 		&completedAt,
 		&createdAt,
@@ -191,6 +193,9 @@ func (backend *dbBackend) readStateFromRow(row interface {
 	}
 	if runBy.Valid {
 		job.RunBy = runBy.String
+	}
+	if lastAt.Valid {
+		job.LastAt = lastAt.Time
 	}
 	if lastError.Valid {
 		job.LastError = lastError.String
@@ -402,7 +407,7 @@ func (backend *dbBackend) Enqueue(ctx context.Context, job *Job) (interface{}, e
 	return id, nil
 }
 
-const fieldsSqlString = " id, priority, max_retry, retried, queue, uuid, type, payload, timeout, deadline, run_at, locked_at, locked_by, failed_at, last_error, created_at, updated_at "
+const fieldsSqlString = " id, priority, max_retry, retried, queue, uuid, type, payload, timeout, deadline, run_at, locked_at, locked_by, last_at, last_error, created_at, updated_at "
 
 func (backend *dbBackend) readJobFromRow(row interface {
 	Scan(dest ...interface{}) error
@@ -416,7 +421,7 @@ func (backend *dbBackend) readJobFromRow(row interface {
 	var runAt NullTime
 	var lockedAt NullTime
 	var lockedBy sql.NullString
-	var failedAt NullTime
+	var lastAt NullTime
 	var lastError sql.NullString
 	var createdAt NullTime
 	var updatedAt NullTime
@@ -435,7 +440,7 @@ func (backend *dbBackend) readJobFromRow(row interface {
 		&runAt,
 		&lockedAt,
 		&lockedBy,
-		&failedAt,
+		&lastAt,
 		&lastError,
 		&createdAt,
 		&updatedAt)
@@ -467,8 +472,8 @@ func (backend *dbBackend) readJobFromRow(row interface {
 	if lockedBy.Valid {
 		job.LockedBy = lockedBy.String
 	}
-	if failedAt.Valid {
-		job.FailedAt = failedAt.Time
+	if lastAt.Valid {
+		job.LastAt = lastAt.Time
 	}
 	if lastError.Valid {
 		job.LastError = lastError.String
@@ -758,7 +763,7 @@ func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []strin
 	sb.WriteString(backend.runningTablename)
 	sb.WriteString(" WHERE ((run_at IS NULL OR run_at < now()) AND (locked_at IS NULL OR (locked_at < (now() - interval '")
 	sb.WriteString(backend.maxRunTimeSQL)
-	sb.WriteString("') AND locked_by = $2))) AND failed_at IS NULL")
+	sb.WriteString("') AND locked_by = $2)))")
 
 	if backend.minPriority > 0 {
 		sb.WriteString(" AND priority >= ")
@@ -855,16 +860,16 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 			maxRunTime:           opts.MaxRunTime,
 			maxRunTimeSQL:        maxRunTimeSQL,
 			readQueuingSQLString: "SELECT " + fieldsSqlString + " FROM " + dbopts.RunningTablename + " WHERE id = $1",
-			insertSQLString: "INSERT INTO " + dbopts.RunningTablename + "(priority, max_retry, retried, queue, uuid, type, payload, timeout, deadline, run_at, locked_at, locked_by, failed_at, last_error, created_at, updated_at)" +
+			insertSQLString: "INSERT INTO " + dbopts.RunningTablename + "(priority, max_retry, retried, queue, uuid, type, payload, timeout, deadline, run_at, locked_at, locked_by, last_at, last_error, created_at, updated_at)" +
 				" VALUES($1, $2, 0, $3, $4, $5, $6, $7, $8, $9, NULL, NULL, NULL, NULL, now(), now()) RETURNING id",
 			clearLocksSQLString: "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL WHERE locked_by = $1",
-			clearLocksByQueueSQLString: "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL, failed_at = NULL, last_error = 'reset' WHERE queue = $1",
+			clearLocksByQueueSQLString: "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL, last_at = NULL, last_error = 'reset' WHERE queue = $1",
 			retryNoErrorSQLString: "UPDATE " + dbopts.RunningTablename +
-				" SET retried = $1, run_at = $2, payload=$3, failed_at=NULL, last_error=NULL, locked_at=NULL, locked_by=NULL, updated_at = now() WHERE id = $4",
+				" SET retried = $1, run_at = $2, payload=$3, last_at=NULL, last_error=NULL, locked_at=NULL, locked_by=NULL, updated_at = now() WHERE id = $4",
 			retryErrorSQLString: "UPDATE " + dbopts.RunningTablename +
-				" SET retried = $1, run_at = $2, payload=$3, failed_at=NULL, last_error=$4, locked_at=NULL, locked_by=NULL, updated_at=now() WHERE id = $5",
+				" SET retried = $1, run_at = $2, payload=$3, last_at=now(), last_error=$4, locked_at=NULL, locked_by=NULL, updated_at=now() WHERE id = $5",
 			replyErrorSQLString: "UPDATE " + dbopts.RunningTablename +
-				" SET last_error=$1, failed_at = now(), updated_at = now() WHERE id = $2",
+				" SET last_error=$1, last_at = now(), updated_at = now() WHERE id = $2",
 			deleteSQLString: "DELETE FROM " + dbopts.RunningTablename + " WHERE id = $1",
 			copySQLString: `INSERT INTO ` + dbopts.ResultTablename + ` SELECT id, priority, retried, queue, uuid, type, payload, locked_by as run_by, last_error, created_at, updated_at FROM ` +
 				dbopts.RunningTablename + ` WHERE id = $1`,
@@ -910,7 +915,7 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 				  run_at            timestamp with time zone,
 				  locked_at         timestamp with time zone,
 				  locked_by         varchar(200),
-				  failed_at         timestamp with time zone,
+				  last_at           timestamp with time zone,
 				  last_error        varchar(2000),
 				  created_at        timestamp with time zone NOT NULL,
 				  updated_at        timestamp with time zone NOT NULL,
@@ -944,6 +949,7 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 				  run_at,
 				  locked_at,
 				  locked_by AS run_by,
+				  last_at,
 				  last_error,
 				  NULL AS completed_at,
 				  created_at,
@@ -963,6 +969,7 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 				  NULL AS run_at,
 				  NULL AS locked_at,
 				  run_by,
+				  updated_at as last_at, 
 				  last_error,
 				  updated_at AS completed_at,
 				  created_at,

@@ -37,7 +37,7 @@ type Job struct {
 	Type      string
 	Payload   Payload
 	UUID      string
-	FailedAt  time.Time
+	LastAt    time.Time
 	LastError string
 	LockedAt  time.Time
 	LockedBy  string
@@ -45,9 +45,9 @@ type Job struct {
 	UpdatedAt time.Time
 }
 
-func (job *Job) isFailed() bool {
-	return !job.FailedAt.IsZero()
-}
+// func (job *Job) isFailed() bool {
+// 	return !job.FailedAt.IsZero()
+// }
 
 func (job *Job) name() string {
 	fields, e := job.Payload.Fields()
