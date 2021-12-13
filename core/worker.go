@@ -111,6 +111,9 @@ type Worker struct {
 }
 
 func NewWorker(options *WorkOptions, mux *ServeMux, backend WorkBackend) (*Worker, error) {
+	if mux == nil {
+		mux = DefaultServeMux
+	}
 	if options.MaxRunTime == 0 {
 		options.MaxRunTime = 15 * time.Minute
 	}
