@@ -44,11 +44,12 @@ type dbBackend struct {
 	readQueuingSQLString        string
 	insertSQLString             string
 	clearLocksSQLString         string
-	clearLocksByQueueSQLString string
+	clearLocksByQueueSQLString  string
 	retryNoErrorSQLString       string
 	retryErrorSQLString         string
 	replyErrorSQLString         string
-	copySQLString               string
+	copyFailResultSQLString     string
+	copyOkResultSQLString       string
 	deleteSQLString             string
 	readResultSQLString         string
 	deleteResultSQLString       string
@@ -540,26 +541,26 @@ func (backend *dbBackend) Fail(ctx context.Context, id interface{}, err string) 
 		if e != nil {
 			return I18nError(backend.dbDrv, e)
 		}
-		return backend.copyResult(ctx, id, tx)
+		return backend.copyResult(ctx, backend.copyFailResultSQLString, id, tx)
 	})
 }
 
 func (backend *dbBackend) Success(ctx context.Context, id interface{}) error {
 	return backend.withTx(ctx, func(ctx context.Context, tx DBRunner) error {
-		return backend.copyResult(ctx, id, tx)
+		return backend.copyResult(ctx, backend.copyOkResultSQLString, id, tx)
 	})
 }
 
-func (backend *dbBackend) copyResult(ctx context.Context, id interface{}, tx DBRunner) error {
-	_, e := tx.ExecContext(ctx, backend.copySQLString, id)
+func (backend *dbBackend) copyResult(ctx context.Context, copySQLString string, id interface{}, tx DBRunner) error {
+	_, e := tx.ExecContext(ctx, copySQLString, id)
 	if nil != e {
-		log.For(ctx).Info(backend.copySQLString, log.Stringer("args", log.SQLArgs{id}), log.Error(e))
+		log.For(ctx).Info(copySQLString, log.Stringer("args", log.SQLArgs{id}), log.Error(e))
 		if e == sql.ErrNoRows {
 			return nil
 		}
 		return I18nError(backend.dbDrv, e)
 	}
-	log.For(ctx).Info(backend.copySQLString, log.Stringer("args", log.SQLArgs{id}))
+	log.For(ctx).Info(copySQLString, log.Stringer("args", log.SQLArgs{id}))
 
 	_, e = tx.ExecContext(ctx, backend.deleteSQLString, id)
 	if nil != e && sql.ErrNoRows != e {
@@ -862,7 +863,7 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 			readQueuingSQLString: "SELECT " + fieldsSqlString + " FROM " + dbopts.RunningTablename + " WHERE id = $1",
 			insertSQLString: "INSERT INTO " + dbopts.RunningTablename + "(priority, max_retry, retried, queue, uuid, type, payload, timeout, deadline, run_at, locked_at, locked_by, last_at, last_error, created_at, updated_at)" +
 				" VALUES($1, $2, 0, $3, $4, $5, $6, $7, $8, $9, NULL, NULL, NULL, NULL, now(), now()) RETURNING id",
-			clearLocksSQLString: "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL WHERE locked_by = $1",
+			clearLocksSQLString:        "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL WHERE locked_by = $1",
 			clearLocksByQueueSQLString: "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL, last_at = NULL, last_error = 'reset' WHERE queue = $1",
 			retryNoErrorSQLString: "UPDATE " + dbopts.RunningTablename +
 				" SET retried = $1, run_at = $2, payload=$3, last_at=NULL, last_error=NULL, locked_at=NULL, locked_by=NULL, updated_at = now() WHERE id = $4",
@@ -871,7 +872,9 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 			replyErrorSQLString: "UPDATE " + dbopts.RunningTablename +
 				" SET last_error=$1, last_at = now(), updated_at = now() WHERE id = $2",
 			deleteSQLString: "DELETE FROM " + dbopts.RunningTablename + " WHERE id = $1",
-			copySQLString: `INSERT INTO ` + dbopts.ResultTablename + ` SELECT id, priority, retried, queue, uuid, type, payload, locked_by as run_by, last_error, created_at, updated_at FROM ` +
+			copyFailResultSQLString: `INSERT INTO ` + dbopts.ResultTablename + ` SELECT id, priority, retried, queue, uuid, type, payload, locked_by as run_by, last_error, created_at, updated_at FROM ` +
+				dbopts.RunningTablename + ` WHERE id = $1`,
+			copyOkResultSQLString: `INSERT INTO ` + dbopts.ResultTablename + ` SELECT id, priority, retried, queue, uuid, type, payload, locked_by as run_by, NULL as last_error, created_at, updated_at FROM ` +
 				dbopts.RunningTablename + ` WHERE id = $1`,
 			readResultSQLString:         "SELECT " + resultFields + " FROM " + dbopts.ResultTablename + " WHERE id = $1",
 			deleteResultSQLString:       "DELETE FROM " + dbopts.ResultTablename + " WHERE id = $1",

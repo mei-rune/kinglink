@@ -65,7 +65,7 @@ func TestEnqueue(t *testing.T) {
 			Type:      "testtype",
 			Payload:   MakePayload(nil, map[string]interface{}{"a": "b"}),
 			UUID:      "uuidtest",
-			LastAt:  time.Now().Add(2 * time.Second),
+			LastAt:    time.Now().Add(2 * time.Second),
 			LastError: "error",
 			LockedAt:  time.Now().Add(3 * time.Second),
 			LockedBy:  "by",
@@ -118,7 +118,7 @@ func TestEnqueue(t *testing.T) {
 			assetTime(t, "LockedAt", newjob.LockedAt, now)
 		})
 
-		t.Run("retry_with_ok", func(t *testing.T) {
+		t.Run("retry_with_empty_error", func(t *testing.T) {
 			backend.ClearAll(ctx)
 			id, e := backend.Enqueue(ctx, job)
 			if nil != e {
@@ -725,7 +725,7 @@ func TestPriority(t *testing.T) {
 			Type:      "testtype",
 			Payload:   MakePayload(nil, map[string]interface{}{"a": "b"}),
 			UUID:      "uuidtest",
-			LastAt:  time.Now().Add(2 * time.Second),
+			LastAt:    time.Now().Add(2 * time.Second),
 			LastError: "error",
 			LockedAt:  time.Now().Add(3 * time.Second),
 			LockedBy:  "by",
@@ -776,7 +776,7 @@ func TestGetWithLocked(t *testing.T) {
 			Type:      "testtype",
 			Payload:   MakePayload(nil, map[string]interface{}{"a": "b"}),
 			UUID:      "uuidtest",
-			LastAt:  time.Now().Add(2 * time.Second),
+			LastAt:    time.Now().Add(2 * time.Second),
 			LastError: "error",
 			LockedAt:  time.Now().Add(3 * time.Second),
 			LockedBy:  "by",
@@ -822,7 +822,7 @@ func TestLockedJobInGet(t *testing.T) {
 			Type:      "testtype",
 			Payload:   MakePayload(nil, map[string]interface{}{"a": "b"}),
 			UUID:      "uuidtest",
-			LastAt:  time.Now().Add(2 * time.Second),
+			LastAt:    time.Now().Add(2 * time.Second),
 			LastError: "error",
 			LockedAt:  time.Now().Add(3 * time.Second),
 			LockedBy:  "by",
@@ -868,7 +868,7 @@ func TestGetWithFailed(t *testing.T) {
 			Type:      "testtype",
 			Payload:   MakePayload(nil, map[string]interface{}{"a": "b"}),
 			UUID:      "uuidtest",
-			LastAt:  time.Now().Add(2 * time.Second),
+			LastAt:    time.Now().Add(2 * time.Second),
 			LastError: "error",
 			LockedAt:  time.Now().Add(3 * time.Second),
 			LockedBy:  "by",

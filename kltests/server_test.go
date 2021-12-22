@@ -8,6 +8,7 @@ import (
 
 	"github.com/runner-mei/errors"
 	"github.com/runner-mei/kinglink"
+	"github.com/runner-mei/kinglink/core"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -303,7 +304,7 @@ func TestRetry(t *testing.T) {
 				Timeout:   0,
 				UUID:      "",
 				Retried:   2,
-				LastAt: time.Now(),
+				LastAt:    time.Now(),
 				LastError: "abcerr",
 			}
 
@@ -617,6 +618,109 @@ func TestWorkerWithRunFail(t *testing.T) {
 				LogMessages: nil,
 				LastError:   "myerror",
 				Status:      kinglink.StatusFail,
+				RunBy:       "",
+			}
+
+			opts := []cmp.Option{
+				cmpopts.IgnoreFields(kinglink.JobState{}, "ID", "CreatedAt", "LastAt", "RunBy", "RunAt", "CompletedAt"),
+				cmp.Comparer(func(a, b kinglink.Payload) bool {
+					return a.String() == b.String()
+				}),
+			}
+			if !cmp.Equal(state, excepted, opts...) {
+				t.Error(cmp.Diff(state, excepted, opts...))
+				return
+			}
+
+			AssetTime(t, "CompletedAt", excepted.CompletedAt, time.Now())
+
+			if id != fmt.Sprint(state.ID) {
+				t.Error("want ", id, "got", fmt.Sprint(state.ID))
+				return
+			}
+			if !strings.HasPrefix(state.RunBy, "mywork:") {
+				t.Error("want startwith 'mywork:' got", state.RunBy)
+			}
+		})
+
+		t.Run("backend.fetch", func(t *testing.T) {
+			job, err := srv.RemoteBackend.Fetch(srv.Ctx, "", nil)
+
+			if err != nil && !errors.IsNoContent(err) {
+				t.Error(err)
+				return
+			}
+
+			if err == nil && job != nil {
+				t.Error("want null got", fmt.Sprintf("%#v", job))
+				return
+			}
+		})
+	})
+}
+
+func TestWorkerWithRetryRunOK(t *testing.T) {
+	mux := kinglink.NewServeMux()
+	mux.Handle("test", kinglink.HandlerFunc(func(ctx *kinglink.Context, job *kinglink.Job) error {
+		fields := job.Payload.MustFields()
+		o := fields["a"]
+		s := fmt.Sprint(o)
+		if s != "b" {
+			return errors.New("arguement a is error - " + s)
+		}
+		return nil
+	}))
+
+	ServerTest(t, nil, nil, nil, func(srv *TServer) {
+		payload := map[string]interface{}{"a": "b"}
+		id, err := srv.RemoteClient.Create(srv.Ctx, "test", payload, &kinglink.Options{})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		repayload := core.MakePayload(nil, payload)
+		srv.RemoteBackend.Retry(srv.Ctx, id, 3, time.Now().Add(-1*time.Minute), &repayload, "retryerr")
+
+		state, err := srv.RemoteClient.Get(srv.Ctx, id)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if state.LastError != "retryerr" {
+			t.Error("lastError:", state.LastError)
+			return
+		}
+
+		srv.Wopts.NamePrefix = "mywork:"
+		w, err := kinglink.NewWorker(srv.Wopts, mux, srv.RemoteBackend)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		w.Run(srv.Ctx, 1, true)
+
+		t.Run("client.get", func(t *testing.T) {
+			state, err := srv.RemoteClient.Get(srv.Ctx, id)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			excepted := &kinglink.JobState{
+				Type:        "test",
+				Payload:     kinglink.MakePayload(nil, map[string]interface{}{"a": "b"}),
+				ID:          id,
+				Queue:       "",
+				Priority:    0,
+				MaxRetry:    0,
+				Timeout:     "0s",
+				UniqueKey:   "",
+				Retried:     3,
+				LogMessages: nil,
+				LastError:   "",
+				Status:      kinglink.StatusOK,
 				RunBy:       "",
 			}
 
