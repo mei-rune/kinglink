@@ -25,32 +25,6 @@ type DbOptions struct {
 	Conn *sql.DB
 }
 
-func  isQuest(drv string) bool {
-	return drv == "dm" || drv == "oracle"
-}
-
-func  hasLastInsertId(drv string) bool {
-	return drv == "dm" || drv == "oracle"
-}
-
-func  Placeholder(drv string,  index int) string {
-	if isQuest( drv ) {
-		return "?"
-	}
-
-	switch index {
-	case 1:
-		return "$1"
-	case 2:
-		return "$2"
-	case 3:
-		return "$3"
-	case 4:
-		return "$4"
-	}
-
-	return "$" + strconv.Itoa(index)
-}
 
 // A job object that is persisted to the database.
 // Contains the work object as a YAML field.
@@ -728,7 +702,7 @@ func (backend *pgBackend) GetStates(ctx context.Context, queues []string, offset
 	var args = make([]interface{}, 0, len(queues))
 	if len(queues) > 0 {
 		if len(queues) == 1 {
-			if isQuest(backend.dbDrv) {
+			if IsNumericParams(backend.dbDrv) {
 				sb.WriteString(" WHERE queue = ?")	
 			} else {
 				sb.WriteString(" WHERE queue = $1")
@@ -740,7 +714,7 @@ func (backend *pgBackend) GetStates(ctx context.Context, queues []string, offset
 				if idx != 0 {
 					sb.WriteString(",")
 				}
-				if isQuest(backend.dbDrv) {
+				if IsNumericParams(backend.dbDrv) {
 					sb.WriteString("?")	
 				} else {
 					sb.WriteString("$")

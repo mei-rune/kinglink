@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"strconv"
 
 	"gitee.com/runner.mei/dm" // 达梦
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -297,9 +298,102 @@ func I18nString(drv string, txt string) string {
 
 func IsNumericParams(drv string) bool {
 	switch drv {
-	case "postgres", "oracle", "odbc_with_oracle", "oci8":
+	case "postgres":
 		return true
+	case "oracle", "odbc_with_oracle", "oci8", "dm":
+		return false
 	default:
 		return false
 	}
+}
+
+func  hasLastInsertId(drv string) bool {
+	return drv == "dm" || drv == "oracle"
+}
+
+func  Placeholder(drv string,  index int) string {
+	if !IsNumericParams( drv ) {
+		return "?"
+	}
+
+	switch index {
+	case 1:
+		return "$1"
+	case 2:
+		return "$2"
+	case 3:
+		return "$3"
+	case 4:
+		return "$4"
+	}
+
+	return "$" + strconv.Itoa(index)
+}
+
+
+type NullString struct {
+	String string
+	Valid  bool // Valid is true if Int64 is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (n *NullString) Scan(value interface{}) error {
+	if value == nil {
+		n.String, n.Valid = "", false
+		return nil
+	}
+	switch s := value.(type) {
+	case []byte:
+		if s != nil {
+			n.Valid = true
+			n.String = string(s)
+		} else {
+			n.String, n.Valid = "", false
+		}
+		return nil
+	case string:
+		n.Valid = true
+		n.String = s
+		return nil
+	case *[]byte:
+		if s != nil && *s != nil {
+			n.Valid = true
+			n.String = string(*s)
+		} else {
+			n.String, n.Valid = "", false
+		}
+		return nil
+	case *string:
+		if s == nil {
+			n.String, n.Valid = "", false
+		} else {
+			n.Valid = true
+			n.String = *s
+		}
+		return nil
+	case *dm.DmClob:
+		l, err := s.GetLength()
+		if err != nil {
+			return err
+		}
+		if l == 0 {
+			n.Valid = true
+			return nil
+		}
+		n.String, err = s.ReadString(1, int(l))
+		if err != nil {
+			return err
+		}
+		n.Valid = true
+		return nil
+	}
+	return fmt.Errorf("unsupported Scan, storing driver.Value type %T into type NullString", value)
+}
+
+// Value implements the driver Valuer interface.
+func (n NullString) Value() (driver.Value, error) {
+	if !n.Valid {
+		return nil, nil
+	}
+	return n.String, nil
 }
