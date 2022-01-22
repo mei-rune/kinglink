@@ -422,6 +422,7 @@ func (backend *dbBackend) Enqueue(ctx context.Context, job *Job) (interface{}, e
 
 const fieldsSqlString = " id, priority, max_retry, retried, queue, uuid, type, payload, timeout, deadline, run_at, locked_at, locked_by, last_at, last_error, created_at, updated_at "
 
+
 func (backend *dbBackend) readJobFromRow(row interface {
 	Scan(dest ...interface{}) error
 }) (*Job, error) {
@@ -777,22 +778,119 @@ func (backend *pgBackend) GetStates(ctx context.Context, queues []string, offset
 }
 
 func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []string) (*Job, error) {
+	switch backend.dbDrv {
+	case "postgres", "pq":
+		return backend.fetchPostgres(ctx, name, queues)
+	case "oracle", "dm":
+		return backend.fetchOracle(ctx, name, queues)
+	}
+	return nil, errors.New("db driver name '" + backend.dbDrv + "' is unknown")
+}
+
+func (backend *pgBackend) fetchOracle(ctx context.Context, name string, queues []string) (*Job, error) {
+	var sb strings.Builder
+	sb.WriteString("SELECT ")
+	sb.WriteString(fieldsSqlString)
+	sb.WriteString(" FROM ")
+	sb.WriteString(backend.runningTablename)
+	sb.WriteString(" WHERE ((run_at IS NULL OR run_at < now()) AND (locked_at IS NULL OR (locked_at < (now() - interval '")
+	sb.WriteString(strings.Replace(backend.maxRunTimeSQL, " Seconds", "", -1))
+	sb.WriteString("' SECOND) AND locked_by = ?")	
+	sb.WriteString(")))")
+
+	if backend.minPriority > 0 {
+		sb.WriteString(" AND priority >= ")
+		sb.WriteString(strconv.FormatInt(int64(backend.minPriority), 10))
+	}
+	if backend.maxPriority > 0 {
+		sb.WriteString(" AND priority <= ")
+		sb.WriteString(strconv.FormatInt(int64(backend.maxPriority), 10))
+	}
+	switch len(queues) {
+	case 0:
+		sb.WriteString(" AND (queue IS NULL OR queue = '')")
+	case 1:
+		sb.WriteString(" AND queue = '")
+		sb.WriteString(queues[0])
+		sb.WriteString("'")
+	default:
+		sb.WriteString(" AND queue in (")
+		for i, s := range queues {
+			if 0 != i {
+				sb.WriteString(", '")
+			} else {
+				sb.WriteString("'")
+			}
+
+			sb.WriteString(s)
+			sb.WriteString("'")
+		}
+		sb.WriteString(")")
+	}
+	sb.WriteString(" ORDER BY priority ASC, run_at ASC")
+
+
+
+	queryStr := sb.String()
+	rows, e := backend.conn.QueryContext(ctx, queryStr, name)
+	if nil != e {
+		if sql.ErrNoRows == e {
+			return nil, WrapSQLError(e, queryStr, []interface{}{name, name})
+		}
+
+		log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(e))
+		return nil, errors.New("execute query sql failed while fetch job from the database, " + I18nString(backend.dbDrv, e.Error()))
+	}
+	defer rows.Close()
+
+	log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}))
+
+
+	sb.Reset()
+	sb.WriteString("UPDATE ")
+	sb.WriteString(backend.runningTablename)
+	sb.WriteString(" SET locked_at = now(), locked_by = ?")
+	sb.WriteString(" WHERE id = ? AND ((locked_at IS NULL OR (locked_at < (now() - interval '")
+	sb.WriteString(strings.Replace(backend.maxRunTimeSQL, " Seconds", "", -1))
+	sb.WriteString("' SECOND) AND locked_by = ?")	
+	sb.WriteString(")))")
+
+	updateStr := sb.String()
+
+	if rows.Next() {
+		job, err := backend.readJobFromRow(rows)
+		if err != nil {
+			log.For(ctx).Info(queryStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(err))
+			return nil, WrapSQLError(err, queryStr, []interface{}{name, name})
+		}
+
+		result, err := backend.conn.ExecContext(ctx, updateStr, name, job.ID, name)
+		if err != nil {
+			log.For(ctx).Info(updateStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(err))
+			return nil, WrapSQLError(err, updateStr, []interface{}{name, name})
+		}
+
+		if affected, err := result.RowsAffected(); err != nil {
+			log.For(ctx).Info(updateStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(err))
+			return nil, WrapSQLError(err, updateStr, []interface{}{name, name})
+		} else if affected > 0 {
+			log.For(ctx).Info(updateStr, log.Stringer("args", log.SQLArgs{name, name}))
+			return job, nil
+		}
+	}
+	return nil, WrapSQLError(sql.ErrNoRows, queryStr, []interface{}{name, name})
+}
+
+func (backend *pgBackend) fetchPostgres(ctx context.Context, name string, queues []string) (*Job, error) {
 	var sb strings.Builder
 	sb.WriteString("UPDATE ")
 	sb.WriteString(backend.runningTablename)
-	sb.WriteString(" SET locked_at = now(), locked_by = ")
-	sb.WriteString(Placeholder(backend.dbDrv, 1))
+	sb.WriteString(" SET locked_at = now(), locked_by = $1")
 	sb.WriteString(" WHERE id in (SELECT id FROM ")
 	sb.WriteString(backend.runningTablename)
 	sb.WriteString(" WHERE ((run_at IS NULL OR run_at < now()) AND (locked_at IS NULL OR (locked_at < (now() - interval '")
-	if backend.dbDrv == "dm" || backend.dbDrv == "oracle" {
-		sb.WriteString(strings.Replace(backend.maxRunTimeSQL, " Seconds", "", -1))
-		sb.WriteString("' SECOND) AND locked_by = ")	
-	} else {
 		sb.WriteString(backend.maxRunTimeSQL)
-		sb.WriteString("') AND locked_by = ")
-	}
-	sb.WriteString(Placeholder(backend.dbDrv, 2))
+		sb.WriteString("') AND locked_by = $2")
 	sb.WriteString(")))")
 
 	if backend.minPriority > 0 {
