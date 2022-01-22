@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"gitee.com/runner.mei/dm" // 达梦
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
 )
@@ -236,6 +237,22 @@ func (payload *Payload) Scan(value interface{}) error {
 		payload.bs = make([]byte, len(s))
 		copy(payload.bs, s)
 		payload.values = nil
+		return nil
+	case *dm.DmClob:
+		l, err := s.GetLength()
+		if err != nil {
+			return err
+		}
+		if l == 0 {
+			payload.bs = nil
+			payload.values = nil
+			return nil
+		}
+		n, err := s.ReadString(1, int(l))
+		if err != nil {
+			return err
+		}
+		payload.bs = []byte(n)
 		return nil
 	}
 	return fmt.Errorf("unsupported Scan, storing driver.Value type %T into type Payload", value)

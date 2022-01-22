@@ -25,6 +25,33 @@ type DbOptions struct {
 	Conn *sql.DB
 }
 
+func  isQuest(drv string) bool {
+	return drv == "dm" || drv == "oracle"
+}
+
+func  hasLastInsertId(drv string) bool {
+	return drv == "dm" || drv == "oracle"
+}
+
+func  Placeholder(drv string,  index int) string {
+	if isQuest( drv ) {
+		return "?"
+	}
+
+	switch index {
+	case 1:
+		return "$1"
+	case 2:
+		return "$2"
+	case 3:
+		return "$3"
+	case 4:
+		return "$4"
+	}
+
+	return "$" + strconv.Itoa(index)
+}
+
 // A job object that is persisted to the database.
 // Contains the work object as a YAML field.
 type dbBackend struct {
@@ -396,7 +423,18 @@ func (backend *dbBackend) Enqueue(ctx context.Context, job *Job) (interface{}, e
 	}
 
 	var id int64
-	err := conn.QueryRowContext(ctx, backend.insertSQLString, job.Priority, job.MaxRetry, queue, uuid, job.Type, &job.Payload, job.Timeout, deadline, runAt).Scan(&id)
+	var err error
+
+	if hasLastInsertId(backend.dbDrv) {
+		result, e := conn.ExecContext(ctx, backend.insertSQLString, job.Priority, job.MaxRetry, queue, uuid, job.Type, &job.Payload, job.Timeout, deadline, runAt)
+		if e != nil {
+			err = e
+		} else {
+			id, err = result.LastInsertId() 
+		}
+	} else {
+		err = conn.QueryRowContext(ctx, backend.insertSQLString, job.Priority, job.MaxRetry, queue, uuid, job.Type, &job.Payload, job.Timeout, deadline, runAt).Scan(&id)
+	}
 	if err != nil {
 		args := []interface{}{job.Priority, job.MaxRetry, queue, job.UUID, job.Type, &job.Payload, job.Timeout, deadline, runAt}
 		log.For(ctx).Info(backend.insertSQLString, log.Stringer("args", log.SQLArgs(args)), log.Error(err))
@@ -690,7 +728,11 @@ func (backend *pgBackend) GetStates(ctx context.Context, queues []string, offset
 	var args = make([]interface{}, 0, len(queues))
 	if len(queues) > 0 {
 		if len(queues) == 1 {
-			sb.WriteString(" WHERE queue = $1")
+			if isQuest(backend.dbDrv) {
+				sb.WriteString(" WHERE queue = ?")	
+			} else {
+				sb.WriteString(" WHERE queue = $1")
+			}
 			args = append(args, queues[0])
 		} else {
 			sb.WriteString(" WHERE queue in (")
@@ -698,9 +740,13 @@ func (backend *pgBackend) GetStates(ctx context.Context, queues []string, offset
 				if idx != 0 {
 					sb.WriteString(",")
 				}
-				sb.WriteString("$")
+				if isQuest(backend.dbDrv) {
+					sb.WriteString("?")	
+				} else {
+					sb.WriteString("$")
+					sb.WriteString(strconv.Itoa(len(args)))
+				}
 				args = append(args, queues[idx])
-				sb.WriteString(strconv.Itoa(len(args)))
 			}
 			sb.WriteString(")")
 		}
@@ -760,11 +806,20 @@ func (backend *pgBackend) Fetch(ctx context.Context, name string, queues []strin
 	var sb strings.Builder
 	sb.WriteString("UPDATE ")
 	sb.WriteString(backend.runningTablename)
-	sb.WriteString(" SET locked_at = now(), locked_by = $1 WHERE id in (SELECT id FROM ")
+	sb.WriteString(" SET locked_at = now(), locked_by = ")
+	sb.WriteString(Placeholder(backend.dbDrv, 1))
+	sb.WriteString(" WHERE id in (SELECT id FROM ")
 	sb.WriteString(backend.runningTablename)
 	sb.WriteString(" WHERE ((run_at IS NULL OR run_at < now()) AND (locked_at IS NULL OR (locked_at < (now() - interval '")
-	sb.WriteString(backend.maxRunTimeSQL)
-	sb.WriteString("') AND locked_by = $2)))")
+	if backend.dbDrv == "dm" || backend.dbDrv == "oracle" {
+		sb.WriteString(strings.Replace(backend.maxRunTimeSQL, " Seconds", "", -1))
+		sb.WriteString("' SECOND) AND locked_by = ")	
+	} else {
+		sb.WriteString(backend.maxRunTimeSQL)
+		sb.WriteString("') AND locked_by = ")
+	}
+	sb.WriteString(Placeholder(backend.dbDrv, 2))
+	sb.WriteString(")))")
 
 	if backend.minPriority > 0 {
 		sb.WriteString(" AND priority >= ")
@@ -838,6 +893,9 @@ func NewBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 	if dbopts.DbDrv == "pq" || dbopts.DbDrv == "postgres" || dbopts.DbDrv == "postgresql" {
 		return newPgBackend(dbopts, opts)
 	}
+	if  dbopts.DbDrv == "dm" || dbopts.DbDrv == "oracle" {
+		return newOracleBackend(dbopts, opts)
+	}
 	return nil, errors.New("db driver name '" + dbopts.DbDrv + "' is unknown")
 }
 
@@ -863,7 +921,7 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 			readQueuingSQLString: "SELECT " + fieldsSqlString + " FROM " + dbopts.RunningTablename + " WHERE id = $1",
 			insertSQLString: "INSERT INTO " + dbopts.RunningTablename + "(priority, max_retry, retried, queue, uuid, type, payload, timeout, deadline, run_at, locked_at, locked_by, last_at, last_error, created_at, updated_at)" +
 				" VALUES($1, $2, 0, $3, $4, $5, $6, $7, $8, $9, NULL, NULL, NULL, NULL, now(), now()) RETURNING id",
-			clearLocksSQLString:        "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL WHERE locked_by = $1",
+			clearLocksSQLString:        "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL WHERE locked_by = ?",
 			clearLocksByQueueSQLString: "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL, last_at = NULL, last_error = 'reset' WHERE queue = $1",
 			retryNoErrorSQLString: "UPDATE " + dbopts.RunningTablename +
 				" SET retried = $1, run_at = $2, payload=$3, last_at=NULL, last_error=NULL, locked_at=NULL, locked_by=NULL, updated_at = now() WHERE id = $4",
@@ -901,9 +959,10 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 		backend.conn = conn
 	}
 
-	script := `DROP VIEW IF EXISTS ` + backend.viewTablename + `;` +
-		`DROP TABLE IF EXISTS ` + backend.runningTablename + `;` +
-		`DROP TABLE IF EXISTS ` + backend.resultTablename + `;` +
+	scripts := []string{
+		`DROP VIEW IF EXISTS ` + backend.viewTablename + `;`,
+		`DROP TABLE IF EXISTS ` + backend.runningTablename + `;`,
+		`DROP TABLE IF EXISTS ` + backend.resultTablename + `;`,
 		`CREATE UNLOGGED TABLE IF NOT EXISTS ` + backend.runningTablename + ` (
 				  id                BIGSERIAL PRIMARY KEY,
 				  priority          int DEFAULT 0,
@@ -924,7 +983,7 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 				  updated_at        timestamp with time zone NOT NULL,
 
 				  UNIQUE(uuid)
-				);` +
+				);`,
 		`CREATE UNLOGGED TABLE IF NOT EXISTS ` + backend.resultTablename + ` (
 				  id                bigint PRIMARY KEY,
 				  priority          int DEFAULT 0,
@@ -937,7 +996,7 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 				  last_error        varchar(2000),
 				  created_at        timestamp with time zone NOT NULL,
 				  updated_at        timestamp with time zone NOT NULL
-				);` +
+				);`,
 		`CREATE OR REPLACE VIEW ` + backend.viewTablename + ` AS
 		  SELECT id,
 				  priority,
@@ -977,13 +1036,166 @@ func newPgBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
 				  updated_at AS completed_at,
 				  created_at,
 				  updated_at
-   FROM ` + backend.resultTablename + `;`
+   FROM ` + backend.resultTablename + `;`,
+}
 
-	_, e := backend.conn.Exec(script)
-	if nil != e {
-		fmt.Println(script)
-		return nil, errors.New("init tables error: " + e.Error())
+	for _, script := range scripts {
+		_, e := backend.conn.Exec(script)
+		if nil != e {
+			fmt.Println(script)
+			return nil, errors.New("init tables error: " + e.Error())
+		}
+	}
+	return backend, nil
+}
+
+
+func newOracleBackend(dbopts *DbOptions, opts *WorkOptions) (Backend, error) {
+	if opts.MaxRunTime == 0 {
+		opts.MaxRunTime = defaultMaxRunTime
+	}
+	maxRunTimeSQL := strconv.FormatInt(int64(opts.MaxRunTime.Seconds()), 10) + " Seconds"
+
+	backend := &pgBackend{
+		dbBackend: dbBackend{
+			dbDrv:                dbopts.DbDrv,
+			dbURL:                dbopts.DbURL,
+			runningTablename:     dbopts.RunningTablename,
+			resultTablename:      dbopts.ResultTablename,
+			viewTablename:        dbopts.ViewTablename,
+			isOwer:               false,
+			conn:                 dbopts.Conn,
+			minPriority:          opts.MinPriority,
+			maxPriority:          opts.MaxPriority,
+			maxRunTime:           opts.MaxRunTime,
+			maxRunTimeSQL:        maxRunTimeSQL,
+			readQueuingSQLString: "SELECT " + fieldsSqlString + " FROM " + dbopts.RunningTablename + " WHERE id = ?",
+			insertSQLString: "INSERT INTO " + dbopts.RunningTablename + "(priority, max_retry, retried, queue, uuid, type, payload, timeout, deadline, run_at, locked_at, locked_by, last_at, last_error, created_at, updated_at)" +
+				" VALUES(?, ?, 0, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, now(), now())",
+			clearLocksSQLString:        "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL WHERE locked_by = ?",
+			clearLocksByQueueSQLString: "UPDATE " + dbopts.RunningTablename + " SET locked_by = NULL, locked_at = NULL, last_at = NULL, last_error = 'reset' WHERE queue = ?",
+			retryNoErrorSQLString: "UPDATE " + dbopts.RunningTablename +
+				" SET retried = ?, run_at = ?, payload=?, last_at=NULL, last_error=NULL, locked_at=NULL, locked_by=NULL, updated_at = now() WHERE id = ?",
+			retryErrorSQLString: "UPDATE " + dbopts.RunningTablename +
+				" SET retried = ?, run_at = ?, payload=?, last_at=now(), last_error=?, locked_at=NULL, locked_by=NULL, updated_at=now() WHERE id = ?",
+			replyErrorSQLString: "UPDATE " + dbopts.RunningTablename +
+				" SET last_error=?, last_at = now(), updated_at = now() WHERE id = ?",
+			deleteSQLString: "DELETE FROM " + dbopts.RunningTablename + " WHERE id = ?",
+			copyFailResultSQLString: `INSERT INTO ` + dbopts.ResultTablename + ` SELECT id, priority, retried, queue, uuid, type, payload, locked_by as run_by, last_error, created_at, updated_at FROM ` +
+				dbopts.RunningTablename + ` WHERE id = ?`,
+			copyOkResultSQLString: `INSERT INTO ` + dbopts.ResultTablename + ` SELECT id, priority, retried, queue, uuid, type, payload, locked_by as run_by, NULL as last_error, created_at, updated_at FROM ` +
+				dbopts.RunningTablename + ` WHERE id = ?`,
+			readResultSQLString:         "SELECT " + resultFields + " FROM " + dbopts.ResultTablename + " WHERE id = ?",
+			deleteResultSQLString:       "DELETE FROM " + dbopts.ResultTablename + " WHERE id = ?",
+			deleteResultWithTimeout:     "DELETE FROM " + dbopts.ResultTablename + " WHERE (updated_at + - interval '%d Minutes') <  now()",
+			readStateSQLString:          "SELECT " + stateFields + " FROM " + dbopts.ViewTablename + " WHERE id = ?",
+			queryStateSQLString:         "SELECT " + stateFields + " FROM " + dbopts.ViewTablename,
+			clearAllQueuing:             "DELETE FROM " + dbopts.RunningTablename,
+			clearAllResult:              "DELETE FROM " + dbopts.ResultTablename,
+			cancelQueuingSQLString:      "DELETE FROM " + dbopts.RunningTablename + " WHERE id = ? AND (locked_at IS NULL OR locked_at < (now() - interval '" + maxRunTimeSQL + "')) ",
+			forceCancelQueuingSQLString: "DELETE FROM " + dbopts.RunningTablename + " WHERE id = ?",
+			countQueuingByIDSQLString:   "SELECT count(*) FROM " + dbopts.RunningTablename + " WHERE id = ?",
+
+			cancelResultSQLString: "DELETE FROM " + dbopts.ResultTablename + " WHERE id = ?",
+		},
 	}
 
+	if backend.conn == nil {
+		conn, e := sql.Open(dbopts.DbDrv, dbopts.DbURL)
+		if nil != e {
+			return nil, e
+		}
+
+		backend.isOwer = true
+		backend.conn = conn
+	}
+
+	scripts := []string{
+		`DROP VIEW IF EXISTS ` + backend.viewTablename + `;`,
+		`DROP TABLE IF EXISTS ` + backend.runningTablename + `;`,
+		`DROP TABLE IF EXISTS ` + backend.resultTablename + `;`,
+		`CREATE TABLE ` + backend.runningTablename + ` (
+				  id                BIGINT IDENTITY(1,1)  PRIMARY KEY,
+				  priority          int DEFAULT 0,
+				  max_retry         int DEFAULT 0,
+				  retried           int DEFAULT 0,
+				  queue             varchar(200),
+				  uuid              varchar(50),
+				  type              varchar(50),
+				  payload           text  NOT NULL,
+				  timeout           int DEFAULT 0,
+				  deadline          timestamp with time zone,
+				  run_at            timestamp with time zone,
+				  locked_at         timestamp with time zone,
+				  locked_by         varchar(200),
+				  last_at           timestamp with time zone,
+				  last_error        varchar(2000),
+				  created_at        timestamp with time zone NOT NULL,
+				  updated_at        timestamp with time zone NOT NULL,
+
+				  UNIQUE(uuid)
+				);`,
+		`CREATE TABLE ` + backend.resultTablename + ` (
+				  id                bigint PRIMARY KEY,
+				  priority          int DEFAULT 0,
+				  retried           int DEFAULT 0,
+				  queue             varchar(200),
+				  uuid              varchar(50),
+				  type              varchar(50),
+				  payload           text  NOT NULL,
+				  run_by            varchar(200),
+				  last_error        varchar(2000),
+				  created_at        timestamp with time zone NOT NULL,
+				  updated_at        timestamp with time zone NOT NULL
+				);`,
+		`CREATE OR REPLACE VIEW ` + backend.viewTablename + ` AS
+		  SELECT id,
+				  priority,
+				  max_retry,
+				  retried,
+				  queue,
+				  uuid,
+				  type,
+				  payload,
+				  timeout,
+				  deadline,
+				  run_at,
+				  locked_at,
+				  locked_by AS run_by,
+				  last_at,
+				  last_error,
+				  NULL AS completed_at,
+				  created_at,
+				  updated_at
+      FROM ` + backend.runningTablename + `
+   UNION
+		 SELECT id,
+				  priority,
+				  0 as max_retry,
+				  retried,
+				  queue,
+				  uuid,
+				  type,
+				  payload,
+				  0 as timeout,
+				  NULL AS deadline,
+				  NULL AS run_at,
+				  NULL AS locked_at,
+				  run_by,
+				  updated_at as last_at, 
+				  last_error,
+				  updated_at AS completed_at,
+				  created_at,
+				  updated_at
+   FROM ` + backend.resultTablename + `;`,
+}
+
+	for _, script := range scripts {
+		_, e := backend.conn.Exec(script)
+		if nil != e {
+			fmt.Println(script)
+			return nil, errors.New("init tables error: " + e.Error())
+		}
+	}
 	return backend, nil
 }

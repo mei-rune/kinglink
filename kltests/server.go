@@ -9,6 +9,10 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	_ "gitee.com/opengauss/openGauss-connector-go-pq" // openGauss
+	_ "gitee.com/runner.mei/dm"                       // 达梦
+	_ "gitee.com/runner.mei/gokb"                     // 人大金仓
+
 	"github.com/runner-mei/kinglink"
 	"github.com/runner-mei/kinglink/kltests/common"
 )
@@ -18,10 +22,11 @@ var (
 	DBDrv = common.DBDrv
 )
 
+
 func MakeOpts() *kinglink.DbOptions {
 	return &kinglink.DbOptions{
 		DbDrv: *DBDrv,
-		DbURL: *DBUrl,
+		DbURL: GetTestConnURL(),
 	}
 }
 

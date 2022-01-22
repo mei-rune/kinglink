@@ -11,6 +11,10 @@ import (
 	"testing"
 	"time"
 
+	_ "gitee.com/runner.mei/dm" // 达梦
+	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq"
+	_ "github.com/ziutek/mymysql/godrv"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/runner-mei/errors"
@@ -26,7 +30,7 @@ var (
 func MakeOpts() *DbOptions {
 	return &DbOptions{
 		DbDrv: *DBDrv,
-		DbURL: *DBUrl,
+		DbURL: common.GetTestConnURL(),
 	}
 }
 
