@@ -22,17 +22,21 @@ import (
 	"github.com/runner-mei/log"
 )
 
-var (
-	DBUrl = common.DBUrl
-	DBDrv = common.DBDrv
-)
 
 func MakeOpts() *DbOptions {
 	return &DbOptions{
-		DbDrv: *DBDrv,
+		DbDrv: *common.DBDrv,
 		DbURL: common.GetTestConnURL(),
 	}
 }
+
+
+func assetTime(t *testing.T, field string, actual, excepted time.Time) {
+	t.Helper()
+
+	common.AssetTime(t, field, actual, excepted)
+}
+
 
 func backendTest(t *testing.T, opts *DbOptions, wopts *WorkOptions, cb func(ctx context.Context, opts *DbOptions, wopts *WorkOptions, backend Backend, conn *sql.DB)) {
 	if opts == nil {
@@ -53,13 +57,18 @@ func backendTest(t *testing.T, opts *DbOptions, wopts *WorkOptions, cb func(ctx 
 	logger := log.NewStdLogger(stdlog.New(os.Stderr, "", stdlog.LstdFlags|stdlog.Lshortfile))
 	ctx := log.ContextWithLogger(context.Background(), logger)
 
+
+	common.SetAssertInterval(t, conn)
+
 	cb(ctx, opts, wopts, backend, conn)
 }
 
 func TestEnqueue(t *testing.T) {
 	backendTest(t, nil, nil, func(ctx context.Context, opts *DbOptions, wopts *WorkOptions, backend Backend, conn *sql.DB) {
+		
+
 		job := &Job{
-			RunAt:     time.Now().Add(-1 * time.Second),
+			RunAt:     time.Now().Add(-10 * time.Minute),
 			Deadline:  time.Now().Add(1 * time.Second),
 			Timeout:   10,
 			Priority:  12,
@@ -130,7 +139,7 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
-			runAt := time.Now().Add(-1 * time.Minute)
+			runAt := time.Now().Add(-10 * time.Minute)
 			e = backend.Retry(ctx, id, 2, runAt, &job.Payload, "")
 			if e != nil {
 				t.Error(e)
@@ -218,7 +227,7 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
-			runAt := time.Now().Add(-2 * time.Minute)
+			runAt := time.Now().Add(-10 * time.Minute)
 			e = backend.Retry(ctx, id, 2, runAt, &job.Payload, "errrr")
 			if e != nil {
 				t.Error(e)
@@ -232,7 +241,7 @@ func TestEnqueue(t *testing.T) {
 			}
 
 			opts := []cmp.Option{
-				cmpopts.IgnoreFields(Job{}, "ID", "LockedAt", "RunAt", "Deadline", "CreatedAt", "UpdatedAt"),
+				cmpopts.IgnoreFields(Job{}, "ID", "LockedAt", "RunAt", "Deadline", "LastAt", "CreatedAt", "UpdatedAt"),
 				cmpopts.EquateApproxTime(1 * time.Second),
 				cmp.Comparer(func(a, b Payload) bool {
 					return a.String() == b.String()
@@ -254,6 +263,7 @@ func TestEnqueue(t *testing.T) {
 			}
 
 			now := time.Now()
+			assetTime(t, "LastAt", newjob.LastAt, job.LastAt)
 			assetTime(t, "RunAt", newjob.RunAt, runAt)
 			assetTime(t, "Deadline", newjob.Deadline, job.Deadline)
 			assetTime(t, "CreatedAt", newjob.CreatedAt, now)
@@ -330,7 +340,7 @@ func TestEnqueue(t *testing.T) {
 
 			exceptedError := strings.Repeat("a", 1900) + "\r\n===========================\r\n**error message is overflow**"
 
-			runAt := time.Now().Add(-2 * time.Minute)
+			runAt := time.Now().Add(-10 * time.Minute)
 			e = backend.Retry(ctx, id, 2, runAt, &job.Payload, strings.Repeat("a", 8010))
 			if e != nil {
 				t.Error(e)
@@ -385,7 +395,7 @@ func TestEnqueue(t *testing.T) {
 				return
 			}
 
-			runAt := time.Now().Add(-1 * time.Minute)
+			runAt := time.Now().Add(-10 * time.Minute)
 			e = backend.Retry(ctx, id, 2, runAt, &job.Payload, "")
 			if e != nil {
 				t.Error(e)
@@ -703,23 +713,10 @@ func TestEnqueue(t *testing.T) {
 	})
 }
 
-func assetTime(t *testing.T, field string, actual, excepted time.Time) {
-	t.Helper()
-
-	interval := actual.Sub(excepted)
-	if interval < 0 {
-		interval = -interval
-	}
-
-	if interval > time.Second {
-		t.Error(field+": want ", excepted, "got", actual, "interval is", interval)
-	}
-}
-
 func TestPriority(t *testing.T) {
 	backendTest(t, nil, nil, func(ctx context.Context, opts *DbOptions, wopts *WorkOptions, backend Backend, conn *sql.DB) {
 		job := &Job{
-			RunAt:     time.Now().Add(-1 * time.Second),
+			RunAt:     time.Now().Add(-10 * time.Minute),
 			Deadline:  time.Now().Add(1 * time.Second),
 			Timeout:   10,
 			Priority:  12,
@@ -816,7 +813,7 @@ func TestGetWithLocked(t *testing.T) {
 func TestLockedJobInGet(t *testing.T) {
 	backendTest(t, nil, nil, func(ctx context.Context, opts *DbOptions, wopts *WorkOptions, backend Backend, conn *sql.DB) {
 		job := &Job{
-			RunAt:     time.Now().Add(-1 * time.Second),
+			RunAt:     time.Now().Add(-1 * time.Hour),
 			Deadline:  time.Now().Add(1 * time.Second),
 			Timeout:   10,
 			Priority:  12,
@@ -840,7 +837,13 @@ func TestLockedJobInGet(t *testing.T) {
 			return
 		}
 
-		_, e = conn.Exec("UPDATE " + opts.RunningTablename + " SET locked_at = now() - interval '1h', locked_by = 'aa'")
+		var sqltxt = "UPDATE " + opts.RunningTablename + " SET locked_at = (now() - interval '5h'), locked_by = 'aa'"
+		if opts.DbDrv == "dm" || opts.DbDrv == "oracle" {
+			sqltxt = "UPDATE " + opts.RunningTablename + " SET locked_at = (now() - interval '5' HOUR), locked_by = 'aa'"
+		}
+	
+		stdlog.Println(sqltxt)
+		_, e = conn.Exec(sqltxt)
 		if nil != e {
 			t.Error(e)
 			return

@@ -370,7 +370,11 @@ func TestRunErrorAndFailAfterMaxRetry(t *testing.T) {
 				assetTime(t, "runAt", runAt, time.Now().Add((time.Duration(i)*10+5)*time.Second))
 			}
 
-			_, e = conn.Exec("UPDATE "+dbOpts.RunningTablename+" SET run_at = $1", time.Now().Add(-1*time.Second))
+			sqltxt := "UPDATE "+dbOpts.RunningTablename+" SET run_at = $1"
+			if dbOpts.DbDrv == "dm" || dbOpts.DbDrv == "oracle" {
+				sqltxt = "UPDATE "+dbOpts.RunningTablename+" SET run_at = ?"
+			}
+			_, e = conn.Exec(sqltxt, time.Now().Add(-5*time.Minute))
 			if nil != e {
 				t.Error(e)
 				return
@@ -427,7 +431,7 @@ func TestRunAgain(t *testing.T) {
 			return nil
 		}
 		count--
-		return RunAgain(time.Now().Add(-1 * time.Second))
+		return RunAgain(time.Now().Add(-5 * time.Minute))
 	}))
 	workTest(t, nil, nil, mux, func(ctx context.Context, logger log.Logger, w *Worker, backend Backend, dbOpts *DbOptions, conn *sql.DB) {
 		_, e := Enqueue(ctx, backend, "test", map[string]interface{}{"a": "b"}, MaxRetry(1))

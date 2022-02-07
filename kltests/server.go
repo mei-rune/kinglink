@@ -8,25 +8,24 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
 	_ "gitee.com/opengauss/openGauss-connector-go-pq" // openGauss
 	_ "gitee.com/runner.mei/dm"                       // 达梦
 	_ "gitee.com/runner.mei/gokb"                     // 人大金仓
+	_ "github.com/lib/pq"
 
 	"github.com/runner-mei/kinglink"
 	"github.com/runner-mei/kinglink/kltests/common"
 )
 
-var (
-	DBUrl = common.DBUrl
-	DBDrv = common.DBDrv
-)
-
+// var (
+// 	DBUrl = common.DBUrl
+// 	DBDrv = common.DBDrv
+// )
 
 func MakeOpts() *kinglink.DbOptions {
 	return &kinglink.DbOptions{
-		DbDrv: *DBDrv,
-		DbURL: GetTestConnURL(),
+		DbDrv: *common.DBDrv,
+		DbURL: common.GetTestConnURL(),
 	}
 }
 
@@ -57,6 +56,9 @@ func ServerTest(t testing.TB, dbopts *kinglink.DbOptions, wopts *kinglink.WorkOp
 		}
 		dbopts.Conn = conn
 	}
+
+	common.SetAssertInterval(t, dbopts.Conn)
+
 	srv, err := kinglink.NewServer(dbopts, wopts, interceptor)
 	if err != nil {
 		t.Error(err)
@@ -103,12 +105,5 @@ func ServerTest(t testing.TB, dbopts *kinglink.DbOptions, wopts *kinglink.WorkOp
 func AssetTime(t *testing.T, field string, actual, excepted time.Time) {
 	t.Helper()
 
-	interval := actual.Sub(excepted)
-	if interval < 0 {
-		interval = -interval
-	}
-
-	if interval > time.Second {
-		t.Error(field+": want ", excepted, "got", actual, "interval is", interval)
-	}
+	common.AssetTime(t, field, actual, excepted)
 }

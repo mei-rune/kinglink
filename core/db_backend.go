@@ -832,6 +832,7 @@ func (backend *pgBackend) fetchOracle(ctx context.Context, name string, queues [
 
 
 	queryStr := sb.String()
+	fmt.Println(queryStr)
 	rows, e := backend.conn.QueryContext(ctx, queryStr, name)
 	if nil != e {
 		if sql.ErrNoRows == e {
@@ -874,7 +875,9 @@ func (backend *pgBackend) fetchOracle(ctx context.Context, name string, queues [
 			log.For(ctx).Info(updateStr, log.Stringer("args", log.SQLArgs{name, name}), log.Error(err))
 			return nil, WrapSQLError(err, updateStr, []interface{}{name, name})
 		} else if affected > 0 {
-			log.For(ctx).Info(updateStr, log.Stringer("args", log.SQLArgs{name, name}))
+			job.LockedBy = name
+
+			log.For(ctx).Info(updateStr, log.Stringer("args", log.SQLArgs{name, name}))			
 			return job, nil
 		}
 	}

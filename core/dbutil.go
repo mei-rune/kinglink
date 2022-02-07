@@ -262,7 +262,7 @@ func (payload *Payload) Scan(value interface{}) error {
 // Value implements the driver Valuer interface.
 func (payload *Payload) Value() (driver.Value, error) {
 	bs, err := payload.MarshalJSON()
-	return bs, err
+	return string(bs), err
 }
 
 func MakePayload(bs []byte,
